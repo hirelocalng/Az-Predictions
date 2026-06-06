@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.env
+venv/
+.venv/
+
+# Model binaries (large — keep locally, don't commit)
+*.pkl
+*.joblib
+*.xgb
+
+# Data (large CSVs)
+data/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Screenshots
+*.png
+*.jpg
+*.jpeg
+
+# Misc
+fbref_cookies.json
+.claude/
+START_WEBSITE.md

@@ -20,7 +20,7 @@ _API_KEY  = "118333be3eb84d0ca4e10740f6d62255"
 _BASE_URL = "https://api.football-data.org/v4"
 _HEADERS  = {"X-Auth-Token": _API_KEY}
 _STATUSES = {"TIMED", "SCHEDULED", "IN_PLAY"}
-_MIN_CONF = 0.60   # minimum confidence on ANY market to include
+_MIN_CONF = 0.55   # minimum confidence on ANY market to include
 _MAX_TIPS = 10     # safety cap on results returned
 
 # ── Competition metadata ──────────────────────────────────────────────────────

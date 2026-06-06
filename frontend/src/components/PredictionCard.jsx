@@ -170,7 +170,7 @@ export default function PredictionCard({ tip, isWC = false }) {
   const aColor = winner === 'away' ? 'r' : 'b'
 
   const bet     = tip.best_bet
-  const isAmber = bet.confidence < 0.60
+  const isAmber = bet.confidence < 0.65
 
   const homeTeam = tip.home_team ?? tip.home
   const awayTeam = tip.away_team ?? tip.away

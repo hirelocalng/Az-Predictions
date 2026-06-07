@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import WorldCupSection from './components/WorldCupSection.jsx'
+import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 
@@ -20,7 +21,7 @@ function Header({ active, setActive }) {
       </div>
 
       <nav className="header-nav">
-        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['club','Club Tips']].map(([id, label]) => (
+        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['intl','Live Internationals'],['club','Club Tips']].map(([id, label]) => (
           <button
             key={id}
             className={`nav-btn${active === id ? ' active' : ''}`}
@@ -39,7 +40,7 @@ function Header({ active, setActive }) {
   )
 }
 
-function Hero({ onDailyTips, onWC, onClub }) {
+function Hero({ onDailyTips, onWC, onIntl, onClub }) {
   return (
     <section className="hero">
       <div className="hero-eyebrow">AI-Powered Match Predictions</div>
@@ -52,12 +53,13 @@ function Hero({ onDailyTips, onWC, onClub }) {
 
       <p className="hero-desc">
         XGBoost models trained on 280,000+ matches across 40 leagues.
-        World Cup 2026 group-stage forecasts and daily club tips.
+        World Cup 2026 forecasts, live internationals, and daily club tips.
       </p>
 
       <div className="hero-actions">
         <button className="btn-primary" onClick={onDailyTips}>Today's Top 5</button>
         <button className="btn-outline" onClick={onWC}>World Cup 2026</button>
+        <button className="btn-outline" onClick={onIntl}>Live Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
       </div>
 
@@ -90,12 +92,15 @@ export default function App() {
         <Hero
           onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
           onWC={() => { setActive('worldcup'); scrollTo('worldcup') }}
+          onIntl={() => { setActive('intl'); scrollTo('intl') }}
           onClub={() => { setActive('club'); scrollTo('club') }}
         />
         <div className="divider" />
         <DailyTipsSection />
         <div className="divider" />
         <WorldCupSection />
+        <div className="divider" />
+        <IntlSection />
         <div className="divider" />
         <ClubSection />
       </main>

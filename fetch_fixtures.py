@@ -349,6 +349,71 @@ def get_club_tips(club_predict_fn) -> list:
 
     return tips
 
+# ── All today's matches via worldcup model (no filter, no confidence floor) ───
+
+def get_intl_tips(wc_predict_fn) -> list:
+    """
+    Fetch ALL of today's matches from football-data.org, run every match
+    through the worldcup model (using FIFA ranking features as fallback),
+    and return the full list — no competition filter, no confidence floor.
+    """
+    matches = _fetch_today()
+    tips = []
+
+    for idx, match in enumerate(matches):
+        home_name, away_name = _extract_teams(match)
+        if not home_name or not away_name:
+            continue
+
+        comp_name  = match.get("competition", {}).get("name", "") or "International"
+        status     = _get_match_status(match)
+        time_str   = _extract_time(match)
+        home_crest = _extract_logo(match, "home")
+        away_crest = _extract_logo(match, "away")
+        date_label = "Live" if status in _LIVE_STATUSES else "Today"
+
+        try:
+            pred = wc_predict_fn(home_name, away_name, is_neutral=True)
+        except Exception:
+            continue
+
+        if not pred:
+            continue
+
+        ph  = pred["home_win"]
+        pd_ = pred["draw"]
+        pa  = pred["away_win"]
+        pg  = pred["over_goals"]
+        display_home = pred.get("resolved_home", home_name)
+        display_away = pred.get("resolved_away", away_name)
+
+        best_prob = max(ph, pd_, pa)
+        if best_prob == ph:
+            bet = {"label": f"{display_home} to Win", "confidence": round(ph, 4)}
+        elif best_prob == pa:
+            bet = {"label": f"{display_away} to Win", "confidence": round(pa, 4)}
+        else:
+            bet = {"label": "Draw", "confidence": round(pd_, 4)}
+
+        tips.append({
+            "id":              f"intl{idx + 1}",
+            "league":          comp_name,
+            "home_team":       display_home,
+            "away_team":       display_away,
+            "home_crest":      home_crest,
+            "away_crest":      away_crest,
+            "is_international": True,
+            "time":            time_str,
+            "date_label":      date_label,
+            "status":          status,
+            "result":          {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
+            "over_goals":      round(pg, 4),
+            "best_bet":        bet,
+        })
+
+    return tips
+
+
 # ── Daily tips (all competitions, top-5 by confidence ≥ 55%) ─────────────────
 
 def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:

@@ -51,7 +51,7 @@ from worldcup_predict import (
     load_data, get_team_form, get_major_form,
     get_h2h, build_feature_vector, get_importance, resolve_team,
 )
-from fetch_fixtures import get_daily_tips, get_club_tips
+from fetch_fixtures import get_daily_tips, get_club_tips, get_intl_tips
 
 _df_intl     = None
 wc_result    = _load('worldcup_result_model.pkl')
@@ -367,6 +367,22 @@ def countdown():
 # ── Daily tips (live fixtures + predictions) ──────────────────────────────────
 
 _DAILY_TIPS_CACHE: dict = {"data": None, "ts": 0.0}
+_INTL_TIPS_CACHE:  dict = {"data": None, "ts": 0.0}
+
+
+@app.route("/api/intl/fixtures")
+def intl_fixtures():
+    now = time.time()
+    if _INTL_TIPS_CACHE["data"] is None or (now - _INTL_TIPS_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            tips = get_intl_tips(_wc_predict)
+            _INTL_TIPS_CACHE["data"] = tips
+            _INTL_TIPS_CACHE["ts"]   = now
+        except Exception as exc:
+            app.logger.error("intl-fixtures fetch failed: %s", exc)
+            if _INTL_TIPS_CACHE["data"] is None:
+                _INTL_TIPS_CACHE["data"] = []
+    return jsonify(_INTL_TIPS_CACHE["data"])
 
 
 @app.route("/api/daily-tips")

@@ -5,9 +5,28 @@ import ClubSection from './components/ClubSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 
 const LogoIcon = () => (
-  <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-    <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" fill="none"/>
-    <polygon points="8,3 10,7 14,7 11,10 12,14 8,11 4,14 5,10 2,7 6,7" fill="currentColor" opacity="0.8"/>
+  <svg viewBox="0 0 24 16" fill="none">
+    {/* Glow halo behind prediction dot */}
+    <circle cx="22" cy="1.5" r="5" fill="var(--green)" opacity="0.10" />
+    {/* Historical trend — solid */}
+    <path
+      d="M1 14.5 L6.5 8.5 L11 11 L16 4"
+      stroke="var(--green)"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    {/* Prediction projection — dashed */}
+    <path
+      d="M16 4 L22 1.5"
+      stroke="var(--green)"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeDasharray="2.8 2.2"
+      opacity="0.5"
+    />
+    {/* Prediction endpoint dot — animated */}
+    <circle cx="22" cy="1.5" r="2.4" fill="var(--green)" className="logo-dot-pulse" />
   </svg>
 )
 
@@ -17,7 +36,7 @@ function Header({ active, setActive }) {
     <header className="header">
       <div className="header-logo">
         <div className="logo-mark"><LogoIcon /></div>
-        Az-<span className="logo-accent">Predictions</span>
+        <span className="logo-word">Az</span><span className="logo-sep">·</span><span className="logo-accent">Predictions</span>
       </div>
 
       <nav className="header-nav">

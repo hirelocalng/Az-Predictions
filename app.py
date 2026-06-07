@@ -279,12 +279,25 @@ def daily_tips():
 
 # ── Serve React build ─────────────────────────────────────────────────────────
 
-@app.route('/', defaults={'path': ''})
+DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
+
+
+@app.route('/')
+def index():
+    return send_from_directory(DIST, 'index.html')
+
+
+@app.route('/assets/<path:filename>')
+def serve_assets(filename):
+    return send_from_directory(os.path.join(DIST, 'assets'), filename)
+
+
 @app.route('/<path:path>')
 def serve(path):
-    if path and os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
-    return send_from_directory(app.static_folder, 'index.html')
+    file_path = os.path.join(DIST, path)
+    if os.path.isfile(file_path):
+        return send_from_directory(DIST, path)
+    return send_from_directory(DIST, 'index.html')
 
 
 if __name__ == '__main__':

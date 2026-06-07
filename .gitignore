@@ -13,6 +13,8 @@ venv/
 
 # Model binaries (large — keep locally, don't commit)
 *.pkl
+!worldcup_result_model.pkl
+!worldcup_goals_model.pkl
 *.joblib
 *.xgb
 

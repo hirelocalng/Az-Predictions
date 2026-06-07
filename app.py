@@ -107,35 +107,141 @@ def _club_predict(h, a, elo_diff, form5_h, form5_a, oh, od, oa, league_code):
     return p_home, p_draw, p_away, p_over_goals, p_over_corners
 
 
-def _wc_predict(home, away, is_neutral=True):
-    df = _intl()
-    all_teams = sorted(set(df['home_team'].tolist() + df['away_team'].tolist()))
-    ta = resolve_team(home,  all_teams)
-    tb = resolve_team(away, all_teams)
-    imp = get_importance('FIFA World Cup')
+# ── FIFA World Rankings (approx. June 2025, WC 2026 participants) ─────────────
 
-    hf = get_team_form(df, ta)
-    af = get_team_form(df, tb)
-    h2h = get_h2h(df, ta, tb)
-    hf.update(get_major_form(df, ta))
-    af.update(get_major_form(df, tb))
+_FIFA_PTS = {
+    'Argentina':     1897, 'France':        1870, 'Spain':         1852,
+    'England':       1818, 'Brazil':        1793, 'Portugal':      1772,
+    'Netherlands':   1749, 'Belgium':       1737, 'Germany':       1728,
+    'Colombia':      1709, 'Uruguay':       1704, 'Croatia':       1683,
+    'Morocco':       1672, 'United States': 1658, 'USA':           1658,
+    'Japan':         1651, 'Mexico':        1641, 'Senegal':       1632,
+    'Serbia':        1625, 'Switzerland':   1620, 'Ecuador':       1618,
+    'Iran':          1610, 'Australia':     1601, 'Denmark':       1598,
+    'South Korea':   1591, 'Poland':        1577, 'Peru':          1572,
+    'Venezuela':     1566, 'Chile':         1558, 'Tunisia':       1554,
+    'Nigeria':       1543, 'Paraguay':      1539, 'Qatar':         1526,
+    'Canada':        1524, 'Saudi Arabia':  1522, 'Jamaica':       1511,
+    'Costa Rica':    1517, 'Panama':        1506, 'Iraq':          1502,
+    'Algeria':       1499, 'Uzbekistan':    1498, 'Mali':          1496,
+    'Ghana':         1490, 'Honduras':      1482, 'Bolivia':       1485,
+    'Indonesia':     1474, 'New Zealand':   1452, 'Cuba':          1430,
+}
 
-    X = build_feature_vector(hf, af, h2h,
-                             wc_result['features'],
-                             is_neutral=is_neutral,
-                             tournament_importance=imp)
+# H2H win-rate for the listed-first team (approximated from historical meetings)
+_H2H_WIN_RATE = {
+    ('Argentina', 'Brazil'):    0.45, ('Brazil', 'Argentina'):    0.40,
+    ('Germany', 'France'):      0.45, ('France', 'Germany'):      0.50,
+    ('Spain', 'Portugal'):      0.50, ('Portugal', 'Spain'):      0.40,
+    ('England', 'Germany'):     0.40, ('Germany', 'England'):     0.50,
+    ('Netherlands', 'Germany'): 0.42, ('Germany', 'Netherlands'): 0.48,
+    ('Brazil', 'France'):       0.38, ('France', 'Brazil'):       0.50,
+    ('Argentina', 'France'):    0.40, ('France', 'Argentina'):    0.50,
+    ('Spain', 'Germany'):       0.50, ('Germany', 'Spain'):       0.40,
+    ('Brazil', 'England'):      0.40, ('England', 'Brazil'):      0.42,
+}
 
-    rp = wc_result['model'].predict_proba(X)[0]   # [away,draw,home]
-    gp = wc_goals['model'].predict_proba(X)[0]    # [under,over]
+
+def _form_from_ranking(team: str) -> dict:
+    """Derive team form features from FIFA ranking points."""
+    pts = _FIFA_PTS.get(team, 1400)
+    n = max(0.0, min(1.0, (pts - 1200) / 700.0))   # 0 = weakest, 1 = best
+
+    win_rate       = round(0.22 + n * 0.48, 4)      # 0.22–0.70
+    draw_rate      = round(0.28 - n * 0.08, 4)      # 0.28–0.20
+    loss_rate      = round(max(0.02, 1.0 - win_rate - draw_rate), 4)
+    goals_scored   = round(0.85 + n * 1.25, 4)      # 0.85–2.10
+    goals_conceded = round(1.65 - n * 0.90, 4)      # 1.65–0.75
+    form_pts       = round(win_rate * 3 + draw_rate, 4)
+    goal_diff      = round(goals_scored - goals_conceded, 4)
+    major_win_rate = round(win_rate * 0.88, 4)
+    major_form_pts = round(major_win_rate * 3 + draw_rate * 0.85, 4)
 
     return {
-        'home_win':    round(float(rp[2]), 4),
-        'draw':        round(float(rp[1]), 4),
-        'away_win':    round(float(rp[0]), 4),
-        'over_goals':  round(float(gp[1]), 4),
-        'resolved_home': ta,
-        'resolved_away': tb,
+        'win_rate':        win_rate,   'draw_rate':       draw_rate,
+        'loss_rate':       loss_rate,  'goals_scored':    goals_scored,
+        'goals_conceded':  goals_conceded, 'form_pts':    form_pts,
+        'form_count':      10.0,       'goal_diff':       goal_diff,
+        'major_win_rate':  major_win_rate, 'major_form_pts': major_form_pts,
+        'major_count':     6.0,
     }
+
+
+def _pure_ranking_predict(home: str, away: str) -> dict:
+    """ELO-style fallback — no ML models or data files required."""
+    hp       = _FIFA_PTS.get(home, 1400)
+    ap       = _FIFA_PTS.get(away, 1400)
+    diff     = hp - ap
+    p_home_r = 1.0 / (1.0 + 10.0 ** (-diff / 600.0))
+    abs_diff = abs(diff)
+    p_draw   = round(max(0.12, min(0.30, 0.27 - abs_diff * 0.00014)), 4)
+    scale    = 1.0 - p_draw
+    p_home   = round(p_home_r * scale, 4)
+    p_away   = round((1.0 - p_home_r) * scale, 4)
+    avg      = (hp + ap) / 2.0
+    p_over   = round(max(0.35, min(0.72, 0.48 + (avg - 1550) / 2000.0 - abs_diff / 4000.0)), 4)
+    return {
+        'home_win': p_home, 'draw': p_draw, 'away_win': p_away,
+        'over_goals': p_over, 'resolved_home': home, 'resolved_away': away,
+    }
+
+
+def _wc_predict(home, away, is_neutral=True):
+    # Tier 1 — full model with historical data (works locally)
+    try:
+        df = _intl()
+        all_teams = sorted(set(df['home_team'].tolist() + df['away_team'].tolist()))
+        ta  = resolve_team(home, all_teams)
+        tb  = resolve_team(away, all_teams)
+        imp = get_importance('FIFA World Cup')
+        hf  = get_team_form(df, ta)
+        af  = get_team_form(df, tb)
+        h2h = get_h2h(df, ta, tb)
+        hf.update(get_major_form(df, ta))
+        af.update(get_major_form(df, tb))
+        X   = build_feature_vector(hf, af, h2h, wc_result['features'],
+                                   is_neutral=is_neutral,
+                                   tournament_importance=imp)
+        rp  = wc_result['model'].predict_proba(X)[0]
+        gp  = wc_goals['model'].predict_proba(X)[0]
+        return {
+            'home_win':      round(float(rp[2]), 4),
+            'draw':          round(float(rp[1]), 4),
+            'away_win':      round(float(rp[0]), 4),
+            'over_goals':    round(float(gp[1]), 4),
+            'resolved_home': ta,
+            'resolved_away': tb,
+        }
+    except Exception:
+        pass
+
+    # Tier 2 — worldcup ML models + FIFA ranking-derived features (Railway path)
+    if wc_result and wc_goals:
+        try:
+            hf       = _form_from_ranking(home)
+            af       = _form_from_ranking(away)
+            h2h_rate = _H2H_WIN_RATE.get((home, away),
+                       _H2H_WIN_RATE.get((away, home), 1 / 3))
+            h2h      = {'count': 5.0, 'home_win_rate': h2h_rate}
+            imp      = get_importance('FIFA World Cup')
+            X        = build_feature_vector(hf, af, h2h, wc_result['features'],
+                                            is_neutral=is_neutral,
+                                            tournament_importance=imp)
+            rp       = wc_result['model'].predict_proba(X)[0]
+            gp       = wc_goals['model'].predict_proba(X)[0]
+            return {
+                'home_win':      round(float(rp[2]), 4),
+                'draw':          round(float(rp[1]), 4),
+                'away_win':      round(float(rp[0]), 4),
+                'over_goals':    round(float(gp[1]), 4),
+                'resolved_home': home,
+                'resolved_away': away,
+            }
+        except Exception:
+            pass
+
+    # Tier 3 — pure ELO/ranking formula (no models or data files needed)
+    return _pure_ranking_predict(home, away)
 
 WC_FIXTURES_RAW = [
     {"id":"wc1","group":"A","home":"Mexico","away":"Uruguay",

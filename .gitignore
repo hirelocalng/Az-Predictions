@@ -18,8 +18,27 @@ venv/
 *.joblib
 *.xgb
 
-# Data (large CSVs)
-data/
+# Data — ignore large/training files, commit only what Railway needs
+data/Matches.csv
+data/EloRatings.csv
+data/goalscorers.csv
+data/final_dataset*.csv
+data/with_odds_test.csv
+data/test.csv
+data/BR-Football-Dataset.csv
+data/archive.zip
+data/2[0-9][0-9][0-9]-2[0-9][0-9][0-9].csv
+data/*.html
+data/*_files/
+data/2024*/
+data/2025*/
+data/argentina_*.csv
+data/brazil_*.csv
+data/liga_*.csv
+data/Dataset-Explanation.txt
+data/EPLStandings.csv
+data/former_names.csv
+data/shootouts.csv
 
 # Frontend
 frontend/node_modules/

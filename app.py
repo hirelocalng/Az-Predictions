@@ -51,7 +51,7 @@ from worldcup_predict import (
     load_data, get_team_form, get_major_form,
     get_h2h, build_feature_vector, get_importance, resolve_team,
 )
-from fetch_fixtures import get_daily_tips
+from fetch_fixtures import get_daily_tips, get_club_tips
 
 _df_intl     = None
 wc_result    = _load('worldcup_result_model.pkl')
@@ -137,71 +137,6 @@ def _wc_predict(home, away, is_neutral=True):
         'resolved_away': tb,
     }
 
-# ── Fixture data ──────────────────────────────────────────────────────────────
-
-CLUB_TIPS_RAW = [
-    {
-        "id": 1, "league": "Premier League", "league_code": "E0",
-        "home_team": "Manchester City", "away_team": "Arsenal",
-        "home_color": "#6caddf", "away_color": "#ef0107",
-        "time": "15:00", "date_label": "Today",
-        "h": {"gf":2.3,"ga":0.8,"sot":7.1,"win":0.74,"draw":0.14,"hwn":0.82,"corners":5.8},
-        "a": {"gf":2.0,"ga":0.9,"sot":6.2,"win":0.62,"draw":0.18,"awn":0.48,"corners":4.6},
-        "elo_diff": 45, "form5_h": 13, "form5_a": 10,
-        "odds": (2.00, 3.50, 4.00),
-    },
-    {
-        "id": 2, "league": "La Liga", "league_code": "SP1",
-        "home_team": "Real Madrid", "away_team": "Atlético Madrid",
-        "home_color": "#ffffff", "away_color": "#ce3524",
-        "time": "20:00", "date_label": "Today",
-        "h": {"gf":2.5,"ga":0.7,"sot":8.0,"win":0.80,"draw":0.10,"hwn":0.86,"corners":6.1},
-        "a": {"gf":1.6,"ga":0.9,"sot":5.2,"win":0.56,"draw":0.24,"awn":0.38,"corners":4.2},
-        "elo_diff": 62, "form5_h": 14, "form5_a": 9,
-        "odds": (1.85, 3.60, 4.50),
-    },
-    {
-        "id": 3, "league": "Bundesliga", "league_code": "D1",
-        "home_team": "Bayern Munich", "away_team": "Bayer Leverkusen",
-        "home_color": "#dc052d", "away_color": "#e32221",
-        "time": "17:30", "date_label": "Today",
-        "h": {"gf":3.0,"ga":1.0,"sot":8.5,"win":0.76,"draw":0.12,"hwn":0.84,"corners":5.5},
-        "a": {"gf":2.2,"ga":0.8,"sot":6.8,"win":0.72,"draw":0.18,"awn":0.56,"corners":5.0},
-        "elo_diff": 22, "form5_h": 12, "form5_a": 13,
-        "odds": (2.15, 3.40, 3.30),
-    },
-    {
-        "id": 4, "league": "Serie A", "league_code": "I1",
-        "home_team": "Inter Milan", "away_team": "Juventus",
-        "home_color": "#003da5", "away_color": "#1a1a1a",
-        "time": "20:45", "date_label": "Today",
-        "h": {"gf":2.0,"ga":0.8,"sot":6.5,"win":0.70,"draw":0.18,"hwn":0.76,"corners":5.1},
-        "a": {"gf":1.8,"ga":1.0,"sot":5.8,"win":0.60,"draw":0.22,"awn":0.42,"corners":4.5},
-        "elo_diff": 28, "form5_h": 11, "form5_a": 10,
-        "odds": (2.10, 3.30, 3.60),
-    },
-    {
-        "id": 5, "league": "Ligue 1", "league_code": "F1",
-        "home_team": "PSG", "away_team": "Marseille",
-        "home_color": "#004170", "away_color": "#2faee0",
-        "time": "21:00", "date_label": "Today",
-        "h": {"gf":2.8,"ga":0.6,"sot":9.0,"win":0.84,"draw":0.10,"hwn":0.90,"corners":6.5},
-        "a": {"gf":1.4,"ga":1.4,"sot":4.5,"win":0.44,"draw":0.28,"awn":0.30,"corners":3.8},
-        "elo_diff": 88, "form5_h": 14, "form5_a": 8,
-        "odds": (1.60, 3.80, 5.50),
-    },
-    {
-        "id": 6, "league": "Premier League", "league_code": "E0",
-        "home_team": "Liverpool", "away_team": "Tottenham",
-        "home_color": "#c8102e", "away_color": "#132257",
-        "time": "12:30", "date_label": "Tomorrow",
-        "h": {"gf":2.4,"ga":0.9,"sot":7.5,"win":0.72,"draw":0.16,"hwn":0.80,"corners":5.6},
-        "a": {"gf":1.9,"ga":1.2,"sot":5.5,"win":0.52,"draw":0.24,"awn":0.36,"corners":4.4},
-        "elo_diff": 52, "form5_h": 12, "form5_a": 9,
-        "odds": (1.90, 3.50, 4.20),
-    },
-]
-
 WC_FIXTURES_RAW = [
     {"id":"wc1","group":"A","home":"Mexico","away":"Uruguay",
      "home_code":"mx","away_code":"uy",
@@ -235,42 +170,6 @@ WC_FIXTURES_RAW = [
      "date":"2026-06-15","time":"17:00","venue":"Lumen Field, Seattle"},
 ]
 
-# ── Pre-compute predictions on startup ────────────────────────────────────────
-
-def _build_club_tips():
-    tips = []
-    for raw in CLUB_TIPS_RAW:
-        ph, pd_, pa, pg, pc = _club_predict(
-            raw['h'], raw['a'],
-            raw['elo_diff'], raw['form5_h'], raw['form5_a'],
-            *raw['odds'], raw['league_code']
-        )
-        # Recommend highest-confidence market
-        best_prob = max(ph, pd_, pa)
-        if best_prob == ph:
-            bet = {'label': f"{raw['home_team']} Win", 'odds': raw['odds'][0], 'confidence': ph}
-        elif best_prob == pa:
-            bet = {'label': f"{raw['away_team']} Win", 'odds': raw['odds'][2], 'confidence': pa}
-        else:
-            bet = {'label': 'Draw', 'odds': raw['odds'][1], 'confidence': pd_}
-
-        tips.append({
-            'id':         raw['id'],
-            'league':     raw['league'],
-            'home_team':  raw['home_team'],
-            'away_team':  raw['away_team'],
-            'home_color': raw.get('home_color', '#444'),
-            'away_color': raw.get('away_color', '#666'),
-            'time':       raw['time'],
-            'date_label': raw['date_label'],
-            'result':       {'home': ph, 'draw': pd_, 'away': pa},
-            'over_goals':   pg,
-            'over_corners': pc,
-            'best_bet':     bet,
-        })
-    return tips
-
-
 def _build_wc_fixtures():
     fixtures = []
     for raw in WC_FIXTURES_RAW:
@@ -301,30 +200,29 @@ def _build_wc_fixtures():
 
 
 print("Loading predictions…", flush=True)
-_CLUB_TIPS = _build_club_tips()
-print(f"  Club tips ready ({len(_CLUB_TIPS)} matches)", flush=True)
 _WC_FIXTURES = _build_wc_fixtures()
 print(f"  WC fixtures ready ({len(_WC_FIXTURES)} matches)", flush=True)
 
 # ── API routes ────────────────────────────────────────────────────────────────
 
+_CACHE_TTL = 600  # 10 minutes
+
+_CLUB_TIPS_CACHE: dict  = {"data": None, "ts": 0.0}
+
+
 @app.route('/api/club/tips')
 def club_tips():
-    now = datetime.now()
-    filtered = []
-    for tip in _CLUB_TIPS:
-        label = tip.get('date_label', '').lower()
-        if label == 'today':
-            try:
-                kickoff = datetime.strptime(tip['time'], "%H:%M").replace(
-                    year=now.year, month=now.month, day=now.day
-                )
-                if now > kickoff + timedelta(minutes=110):
-                    continue
-            except Exception:
-                pass
-        filtered.append(tip)
-    return jsonify(filtered)
+    now_ts = time.time()
+    if _CLUB_TIPS_CACHE["data"] is None or (now_ts - _CLUB_TIPS_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            tips = get_club_tips(_club_predict)
+            _CLUB_TIPS_CACHE["data"] = tips
+            _CLUB_TIPS_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            app.logger.error("club-tips fetch failed: %s", exc)
+            if _CLUB_TIPS_CACHE["data"] is None:
+                _CLUB_TIPS_CACHE["data"] = []
+    return jsonify(_CLUB_TIPS_CACHE["data"])
 
 
 @app.route('/api/worldcup/fixtures')
@@ -363,7 +261,6 @@ def countdown():
 # ── Daily tips (live fixtures + predictions) ──────────────────────────────────
 
 _DAILY_TIPS_CACHE: dict = {"data": None, "ts": 0.0}
-_CACHE_TTL = 600  # 10 minutes
 
 
 @app.route("/api/daily-tips")

@@ -1,9 +1,9 @@
 """
-fetch_fixtures.py — Fetch live matches from Free API Live Football Data (RapidAPI),
-score each with XGBoost models, and return top-5 predictions with ≥55% confidence.
+fetch_fixtures.py — Fetch today's fixtures from football-data.org,
+score each through XGBoost models, and return predictions.
 
-Endpoint: GET /football-current-live
-Response:  { "response": { "live": [ <match>, ... ] } }
+Endpoints used:
+  GET /v4/matches?dateFrom=YYYY-MM-DD&dateTo=YYYY-MM-DD
 """
 
 import difflib
@@ -16,195 +16,104 @@ import requests
 
 warnings.filterwarnings("ignore")
 
-# ── RapidAPI ──────────────────────────────────────────────────────────────────
+# ── football-data.org API ──────────────────────────────────────────────────────
 
-_LIVE_URL     = "https://free-api-live-football-data.p.rapidapi.com/football-current-live"
-_FIXTURES_URL = "https://free-api-live-football-data.p.rapidapi.com/football-get-all-fixtures-by-date"
-_HEADERS  = {
-    "x-rapidapi-key":  "c9b2df19ddmsh44246571fb2e3c6p1f4bfjsn0f74392f56f5",
-    "x-rapidapi-host": "free-api-live-football-data.p.rapidapi.com",
-}
+_FD_URL     = "https://api.football-data.org/v4/matches"
+_FD_HEADERS = {"X-Auth-Token": "118333be3eb84d0ca4e10740f6d62255"}
 
-_MIN_CONF = 0.55   # minimum confidence on any market
-_MAX_TIPS = 5      # return only the top 5
+_MIN_CONF = 0.55
+_MAX_TIPS = 5
 
+# Statuses from football-data.org that mean the match is over / won't be played
 _FINISHED_STATUSES = frozenset({
-    "ft", "aet", "pen", "abd", "fin", "final", "finished",
-    "full_time", "full-time", "ended", "completed", "closed",
-    "match_finished", "after extra time", "after penalties",
+    "FINISHED", "POSTPONED", "SUSPENDED", "CANCELLED", "AWARDED",
 })
 
-_LIVE_STATUSES = frozenset({
-    "1h", "ht", "2h", "et", "bt", "p", "live", "in_play",
-    "in play", "playing", "ongoing", "inprogress",
+# Statuses that mean the match is currently in progress
+_LIVE_STATUSES = frozenset({"IN_PLAY", "PAUSED"})
+
+# competition.code values for national-team tournaments → route to WC models
+_INTL_COMP_CODES = frozenset({
+    "WC", "EC", "AMC", "NL", "WCQ", "ECQ",
+    "AFCON", "CAC", "GCUP", "AFC", "CAN",
 })
 
-# ── League name → Matches.csv Division code ────────────────────────────────────
-
-_LEAGUE_TO_CODE = {
-    "premier league":         "E0",
-    "championship":           "E0",
-    "la liga":                "SP1",
-    "bundesliga":             "D1",
-    "serie a":                "I1",
-    "ligue 1":                "F1",
-    "eredivisie":             "N1",
-    "primeira liga":          "P1",
-    "brasileirao":            "BRA",
-    "serie a brazil":         "BRA",
-    "argentina primera":      "ARG",
-    "superliga argentina":    "ARG",
-    "champions league":       "E0",
-    "europa league":          "E0",
+# competition.code → Matches.csv Division code
+_COMP_TO_LEAGUE = {
+    "PL":  "E0",   # Premier League
+    "ELC": "E0",   # Championship
+    "PD":  "SP1",  # La Liga
+    "BL1": "D1",   # Bundesliga
+    "SA":  "I1",   # Serie A
+    "FL1": "F1",   # Ligue 1
+    "PPL": "P1",   # Primeira Liga
+    "DED": "N1",   # Eredivisie
+    "BSA": "BRA",  # Brasileirão
+    "CL":  "E0",   # Champions League (use EPL history as proxy)
+    "EL":  "E0",   # Europa League
+    "ECL": "E0",   # Conference League
 }
 
-_INTL_KEYWORDS = {
+# competition name keywords that indicate international / national-team matches
+_INTL_KEYWORDS = frozenset({
     "world cup", "euro", "copa america", "nations league", "gold cup",
     "africa cup", "asian cup", "friendly", "international", "warm-up",
     "concacaf", "conmebol", "afcon",
-}
+})
 
-# ── Team name extraction helpers ──────────────────────────────────────────────
-
-def _team_name(obj) -> str:
-    """Extract a team name from whatever shape the match dict uses."""
-    if isinstance(obj, dict):
-        for key in ("name", "team_name", "teamName"):
-            if obj.get(key):
-                return str(obj[key]).strip()
-    return str(obj).strip() if obj else ""
-
+# ── Extraction helpers (football-data.org response shape) ─────────────────────
 
 def _extract_teams(match: dict):
-    """Return (home_name, away_name) from a match dict."""
-    # Shape 1: homeTeam / awayTeam objects
-    if "homeTeam" in match or "awayTeam" in match:
-        return _team_name(match.get("homeTeam", {})), _team_name(match.get("awayTeam", {}))
-    # Shape 2: home / away objects or strings
-    if "home" in match or "away" in match:
-        return _team_name(match.get("home", "")), _team_name(match.get("away", ""))
-    # Shape 3: flat string fields
-    for h_key in ("homeName", "home_team", "home_name", "match_hometeam_name"):
-        if match.get(h_key):
-            for a_key in ("awayName", "away_team", "away_name", "match_awayteam_name"):
-                if match.get(a_key):
-                    return str(match[h_key]).strip(), str(match[a_key]).strip()
-    return "", ""
+    home = match.get("homeTeam", {}).get("name", "").strip()
+    away = match.get("awayTeam", {}).get("name", "").strip()
+    return home, away
 
 
 def _extract_league(match: dict) -> str:
-    """Return the competition/league name as a lowercase string."""
-    for key in ("competition", "league", "tournament"):
-        val = match.get(key)
-        if isinstance(val, dict):
-            name = val.get("name") or val.get("league_name") or ""
-            return str(name).lower().strip()
-        if isinstance(val, str):
-            return val.lower().strip()
-    for key in ("league_name", "competition_name", "tournament_name"):
-        if match.get(key):
-            return str(match[key]).lower().strip()
-    return ""
+    return match.get("competition", {}).get("name", "").lower()
+
+
+def _extract_comp_code(match: dict) -> str:
+    return match.get("competition", {}).get("code", "")
 
 
 def _extract_logo(match: dict, side: str) -> str:
-    """Return crest/logo URL for 'home' or 'away' side."""
-    team_key = "homeTeam" if side == "home" else "awayTeam"
-    alt_key  = "home"     if side == "home" else "away"
-    obj = match.get(team_key) or match.get(alt_key) or {}
-    if isinstance(obj, dict):
-        return obj.get("logo") or obj.get("crest") or obj.get("image") or ""
-    return ""
+    key = "homeTeam" if side == "home" else "awayTeam"
+    return match.get(key, {}).get("crest", "")
 
 
 def _get_match_status(match: dict) -> str:
-    """Extract and normalise match status string."""
-    for key in ("status", "state", "matchStatus", "match_status", "statusShort", "match_state"):
-        val = match.get(key)
-        if isinstance(val, dict):
-            val = val.get("short") or val.get("long") or val.get("name") or ""
-        if val:
-            return str(val).lower().strip()
-    return ""
+    return match.get("status", "").upper()
 
 
 def _is_finished(match: dict) -> bool:
-    """Return True if this match has already been completed."""
     return _get_match_status(match) in _FINISHED_STATUSES
 
 
 def _extract_time(match: dict) -> str:
-    """Return a HH:MM kick-off string."""
-    for key in ("time", "startTime", "utcDate", "date", "kickoff", "match_time"):
-        val = match.get(key, "")
-        if val:
-            val = str(val)
-            for fmt in ("%H:%M", "%H:%M:%S"):
-                try:
-                    return datetime.strptime(val, fmt).strftime("%H:%M")
-                except ValueError:
-                    pass
-            try:
-                dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-                return dt.strftime("%H:%M")
-            except Exception:
-                pass
-            if len(val) >= 5 and ":" in val:
-                return val[:5]
+    utc = match.get("utcDate", "")
+    if utc:
+        try:
+            dt = datetime.fromisoformat(utc.replace("Z", "+00:00"))
+            return dt.strftime("%H:%M")
+        except Exception:
+            pass
     return "?"
 
-# ── Fetch live matches ────────────────────────────────────────────────────────
+# ── Fetch today's fixtures ────────────────────────────────────────────────────
 
-def _fetch_live() -> list:
-    """Fetch today's fixtures (scheduled + live), excluding finished matches."""
+def _fetch_today() -> list:
+    """Return all of today's non-finished matches from football-data.org."""
     today = datetime.now().strftime("%Y-%m-%d")
-    matches: list = []
-    seen_ids: set = set()
-
-    def _add(items):
-        for m in items:
-            mid = (m.get("id") or m.get("match_id") or m.get("fixture_id")
-                   or m.get("matchId") or m.get("fixtureId"))
-            if mid and mid in seen_ids:
-                continue
-            if mid:
-                seen_ids.add(mid)
-            if not _is_finished(m):
-                matches.append(m)
-
-    # Try date-based endpoint (all of today's fixtures)
-    try:
-        r = requests.get(_FIXTURES_URL, headers=_HEADERS,
-                         params={"date": today}, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        resp = data.get("response", data)
-        added = False
-        if isinstance(resp, dict):
-            for key in ("fixtures", "matches", "schedule", "live", "games", "data"):
-                items = resp.get(key, [])
-                if isinstance(items, list) and items:
-                    _add(items)
-                    added = True
-                    break
-        if not added and isinstance(resp, list):
-            _add(resp)
-    except Exception:
-        pass
-
-    # Also fetch currently live matches (complements the schedule)
-    try:
-        r = requests.get(_LIVE_URL, headers=_HEADERS, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        live = data.get("response", {}).get("live", [])
-        if isinstance(live, list):
-            _add(live)
-    except Exception as exc:
-        if not matches:
-            raise RuntimeError(f"Failed to fetch fixtures: {exc}") from exc
-
-    return matches
+    r = requests.get(
+        _FD_URL,
+        headers=_FD_HEADERS,
+        params={"dateFrom": today, "dateTo": today},
+        timeout=15,
+    )
+    r.raise_for_status()
+    matches = r.json().get("matches", [])
+    return [m for m in matches if not _is_finished(m)]
 
 # ── Historical club stats ─────────────────────────────────────────────────────
 
@@ -333,63 +242,181 @@ def _best_bet(home_name, away_name, ph, pd_, pa, pg, pc=None):
     goals_conf = max(pg, 1.0 - pg)
     options.append(("Over 2.5 Goals" if pg >= 0.5 else "Under 2.5 Goals", goals_conf))
 
-    corners_conf = 0.0
     if pc is not None:
         corners_conf = max(pc, 1.0 - pc)
         options.append(("Corners Over 9.5" if pc >= 0.5 else "Corners Under 9.5", corners_conf))
 
     label, best_conf = max(options, key=lambda x: x[1])
-    return label, round(best_conf, 4), round(max(result_conf, goals_conf, corners_conf), 4)
+    return label, round(best_conf, 4), round(max(x[1] for x in options), 4)
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Shared feature builder for club matches ───────────────────────────────────
+
+def _score_club_match(match, club_predict_fn):
+    """
+    Given a football-data.org match dict and a predict function, return a
+    scored result dict or None if it should be skipped.
+    """
+    home_name, away_name = _extract_teams(match)
+    if not home_name or not away_name:
+        return None
+
+    comp_code  = _extract_comp_code(match)
+    league_code = _COMP_TO_LEAGUE.get(comp_code, "E0")
+    comp_name  = match.get("competition", {}).get("name", "")
+    status     = _get_match_status(match)
+    time_str   = _extract_time(match)
+    home_crest = _extract_logo(match, "home")
+    away_crest = _extract_logo(match, "away")
+
+    df_hist = _load_history(league_code)
+    if df_hist.empty:
+        df_hist = _load_history("E0")
+
+    if not df_hist.empty:
+        teams = sorted(set(df_hist["home"].tolist() + df_hist["away"].tolist()))
+        h_res = _resolve(home_name, teams)
+        a_res = _resolve(away_name, teams)
+        hs  = _rolling(df_hist, h_res) if h_res else dict(_DEFAULT_STATS)
+        as_ = _rolling(df_hist, a_res) if a_res else dict(_DEFAULT_STATS)
+    else:
+        hs  = dict(_DEFAULT_STATS)
+        as_ = dict(_DEFAULT_STATS)
+
+    form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
+    form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
+
+    try:
+        ph, pd_, pa, pg, pc = club_predict_fn(
+            hs, as_, 0, form5_h, form5_a, 2.60, 3.10, 2.80, league_code
+        )
+    except Exception:
+        return None
+
+    best_prob = max(ph, pd_, pa)
+    if best_prob == ph:
+        bet = {"label": f"{home_name} Win", "odds": 2.60, "confidence": round(ph, 4)}
+    elif best_prob == pa:
+        bet = {"label": f"{away_name} Win", "odds": 2.80, "confidence": round(pa, 4)}
+    else:
+        bet = {"label": "Draw", "odds": 3.10, "confidence": round(pd_, 4)}
+
+    return {
+        "league":       comp_name,
+        "home_team":    home_name,
+        "away_team":    away_name,
+        "home_color":   "#444",
+        "away_color":   "#666",
+        "home_crest":   home_crest,
+        "away_crest":   away_crest,
+        "time":         time_str,
+        "date_label":   "Live" if status in _LIVE_STATUSES else "Today",
+        "status":       status,
+        "result":       {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
+        "over_goals":   round(pg, 4),
+        "over_corners": round(pc, 4),
+        "best_bet":     bet,
+        "_conf":        max(ph, pd_, pa, max(pg, 1 - pg)),
+    }
+
+# ── Club tips (domestic leagues only) ────────────────────────────────────────
+
+def get_club_tips(club_predict_fn) -> list:
+    """
+    Fetch today's matches from football-data.org, filter to domestic club
+    competitions, run predictions, return all scored matches (no confidence
+    floor — callers decide whether to show 'no matches' message).
+    """
+    matches = _fetch_today()
+    tips = []
+
+    for idx, match in enumerate(matches):
+        comp_code  = _extract_comp_code(match)
+        league_raw = _extract_league(match)
+
+        # Skip national-team competitions
+        if comp_code in _INTL_COMP_CODES:
+            continue
+        if any(kw in league_raw for kw in _INTL_KEYWORDS):
+            continue
+
+        scored = _score_club_match(match, club_predict_fn)
+        if scored is None:
+            continue
+
+        scored["id"] = idx + 1
+        scored.pop("_conf", None)
+        tips.append(scored)
+
+    return tips
+
+# ── Daily tips (all competitions, top-5 by confidence ≥ 55%) ─────────────────
 
 def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
     """
-    Fetch /football-current-live, score each match through the ML models,
-    filter to ≥55% confidence, return the top 5 sorted by confidence.
+    Fetch today's matches from football-data.org, score every match through
+    the appropriate model, filter to ≥55% confidence, return the top 5.
     """
-    live_matches = _fetch_live()
+    matches = _fetch_today()
     results = []
 
-    for idx, match in enumerate(live_matches):
-        if _is_finished(match):
-            continue
-
+    for idx, match in enumerate(matches):
         home_name, away_name = _extract_teams(match)
         if not home_name or not away_name:
             continue
 
-        status      = _get_match_status(match)
-        date_label  = "Live" if status in _LIVE_STATUSES else "Today"
-        league_raw  = _extract_league(match)
-        time_str    = _extract_time(match)
-        home_logo   = _extract_logo(match, "home")
-        away_logo   = _extract_logo(match, "away")
-        comp_label  = match.get("competition", {}).get("name") \
-                      or match.get("league", {}).get("name") \
-                      or league_raw.title() or "Today"
+        comp_code  = _extract_comp_code(match)
+        league_raw = _extract_league(match)
+        status     = _get_match_status(match)
+        time_str   = _extract_time(match)
+        home_logo  = _extract_logo(match, "home")
+        away_logo  = _extract_logo(match, "away")
+        comp_label = match.get("competition", {}).get("name", "") or league_raw.title()
+        date_label = "Live" if status in _LIVE_STATUSES else "Today"
 
-        # ── International match ───────────────────────────────────────────
-        is_intl = any(kw in league_raw for kw in _INTL_KEYWORDS)
+        is_intl = (comp_code in _INTL_COMP_CODES
+                   or any(kw in league_raw for kw in _INTL_KEYWORDS))
+
+        # ── International / national-team match ───────────────────────────
         if is_intl:
+            pred = None
             try:
                 pred = wc_predict_fn(home_name, away_name, is_neutral=True)
             except Exception:
-                continue
+                pass
 
-            ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
-            pg           = pred["over_goals"]
-            bet_lbl, bet_conf, overall = _best_bet(
-                pred["resolved_home"], pred["resolved_away"], ph, pd_, pa, pg
-            )
+            if pred:
+                ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
+                pg           = pred["over_goals"]
+                display_home = pred["resolved_home"]
+                display_away = pred["resolved_away"]
+                bet_lbl, bet_conf, overall = _best_bet(
+                    display_home, display_away, ph, pd_, pa, pg
+                )
+            else:
+                # Fall back to club models with default stats
+                hs  = dict(_DEFAULT_STATS)
+                as_ = dict(_DEFAULT_STATS)
+                form5_h = round((hs["win"] * 3 + hs["draw"]) * 5)
+                form5_a = round((as_["win"] * 3 + as_["draw"]) * 5)
+                try:
+                    ph, pd_, pa, pg, pc = club_predict_fn(
+                        hs, as_, 0, form5_h, form5_a, 2.60, 3.10, 2.80, "E0"
+                    )
+                except Exception:
+                    continue
+                display_home, display_away = home_name, away_name
+                bet_lbl, bet_conf, overall = _best_bet(
+                    home_name, away_name, ph, pd_, pa, pg, pc
+                )
+
             if overall < _MIN_CONF:
                 continue
 
             results.append({
                 "id":               f"dt{idx+1}",
                 "league":           comp_label,
-                "home_team":        pred["resolved_home"],
-                "away_team":        pred["resolved_away"],
+                "home_team":        display_home,
+                "away_team":        display_away,
                 "home_crest":       home_logo,
                 "away_crest":       away_logo,
                 "is_international": True,
@@ -403,57 +430,28 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
 
         # ── Club match ────────────────────────────────────────────────────
         else:
-            league_code = next(
-                (code for kw, code in _LEAGUE_TO_CODE.items() if kw in league_raw),
-                None
-            )
-            if not league_code:
-                league_code = "E0"   # generic fallback so we still score the match
-
-            df_hist = _load_history(league_code)
-            if df_hist.empty:
-                # Try generic EPL history as fallback
-                df_hist = _load_history("E0")
-            if df_hist.empty:
+            scored = _score_club_match(match, club_predict_fn)
+            if scored is None:
                 continue
 
-            teams  = sorted(set(df_hist["home"].tolist() + df_hist["away"].tolist()))
-            h_res  = _resolve(home_name, teams)
-            a_res  = _resolve(away_name, teams)
-
-            hs   = _rolling(df_hist, h_res)  if h_res else dict(_DEFAULT_STATS)
-            as_  = _rolling(df_hist, a_res)  if a_res else dict(_DEFAULT_STATS)
-
-            form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
-            form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
-
-            try:
-                ph, pd_, pa, pg, pc = club_predict_fn(
-                    hs, as_, 0, form5_h, form5_a, 2.60, 3.10, 2.80, league_code
-                )
-            except Exception:
-                continue
-
-            bet_lbl, bet_conf, overall = _best_bet(
-                home_name, away_name, ph, pd_, pa, pg, pc
-            )
+            overall = scored.pop("_conf")
             if overall < _MIN_CONF:
                 continue
 
             results.append({
                 "id":               f"dt{idx+1}",
                 "league":           comp_label,
-                "home_team":        home_name,
-                "away_team":        away_name,
+                "home_team":        scored["home_team"],
+                "away_team":        scored["away_team"],
                 "home_crest":       home_logo,
                 "away_crest":       away_logo,
                 "is_international": False,
                 "time":             time_str,
                 "date_label":       date_label,
-                "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
-                "over_goals":       round(pg, 4),
-                "over_corners":     round(pc, 4),
-                "best_bet":         {"label": bet_lbl, "confidence": bet_conf},
+                "result":           scored["result"],
+                "over_goals":       scored["over_goals"],
+                "over_corners":     scored["over_corners"],
+                "best_bet":         scored["best_bet"],
                 "_conf":            overall,
             })
 

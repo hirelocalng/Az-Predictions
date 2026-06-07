@@ -7,6 +7,7 @@ Endpoints used:
 """
 
 import difflib
+import math
 import warnings
 from datetime import datetime
 
@@ -226,6 +227,15 @@ def _rolling(df: pd.DataFrame, team: str, n: int = 5) -> dict:
         "_pts":    pts,
     }
 
+# ── BTTS helper ───────────────────────────────────────────────────────────────
+
+def _btts_prob(home_gs: float, away_gs: float) -> float:
+    """P(both teams score ≥1 goal) using Poisson approximation."""
+    p_h = 1.0 - math.exp(-max(0.05, home_gs))
+    p_a = 1.0 - math.exp(-max(0.05, away_gs))
+    return round(p_h * p_a, 4)
+
+
 # ── Best bet selector ─────────────────────────────────────────────────────────
 
 def _best_bet(home_name, away_name, ph, pd_, pa, pg, pc=None):
@@ -292,6 +302,8 @@ def _score_club_match(match, club_predict_fn):
     except Exception:
         return None
 
+    btts = _btts_prob(hs.get("gf", 1.2), as_.get("gf", 1.2))
+
     best_prob = max(ph, pd_, pa)
     if best_prob == ph:
         bet = {"label": f"{home_name} Win", "odds": 2.60, "confidence": round(ph, 4)}
@@ -313,6 +325,7 @@ def _score_club_match(match, club_predict_fn):
         "status":       status,
         "result":       {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
         "over_goals":   round(pg, 4),
+        "btts":         btts,
         "over_corners": round(pc, 4),
         "best_bet":     bet,
         "_conf":        max(ph, pd_, pa, max(pg, 1 - pg)),
@@ -408,6 +421,8 @@ def get_intl_tips(wc_predict_fn) -> list:
             "status":          status,
             "result":          {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
             "over_goals":      round(pg, 4),
+            "btts":            pred.get("btts",         _btts_prob(1.2, 1.2)),
+            "over_corners":    pred.get("over_corners", 0.52),
             "best_bet":        bet,
         })
 
@@ -489,6 +504,8 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
                 "date_label":       date_label,
                 "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
                 "over_goals":       round(pg, 4),
+                "btts":             (pred or {}).get("btts",         _btts_prob(1.2, 1.2)),
+                "over_corners":     (pred or {}).get("over_corners", 0.52),
                 "best_bet":         {"label": bet_lbl, "confidence": bet_conf},
                 "_conf":            overall,
             })
@@ -515,6 +532,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
                 "date_label":       date_label,
                 "result":           scored["result"],
                 "over_goals":       scored["over_goals"],
+                "btts":             scored.get("btts", _btts_prob(1.2, 1.2)),
                 "over_corners":     scored["over_corners"],
                 "best_bet":         scored["best_bet"],
                 "_conf":            overall,

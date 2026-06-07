@@ -138,18 +138,18 @@ function KickoffCountdown({ utcDate }) {
 
 // ── Binary outcome block ──────────────────────────────────────────────────────
 
-function BinaryBlock({ label, over, under }) {
+function BinaryBlock({ label, over, under, labels = ['Over', 'Under'] }) {
   const overWins = over >= 0.5
   return (
     <div className="conf-block">
       <div className="conf-heading">{label}</div>
       <div className="binary-row">
         <div className={`binary-cell${overWins ? ' win' : ''}`}>
-          <div className="b-label">Over</div>
+          <div className="b-label">{labels[0]}</div>
           <div className="b-val">{Math.round(over * 100)}%</div>
         </div>
         <div className={`binary-cell${!overWins ? ' win' : ''}`}>
-          <div className="b-label">Under</div>
+          <div className="b-label">{labels[1]}</div>
           <div className="b-val">{Math.round(under * 100)}%</div>
         </div>
       </div>
@@ -234,8 +234,18 @@ export default function PredictionCard({ tip, isWC = false }) {
       {/* Goals */}
       <BinaryBlock label="Goals — Over / Under 2.5" over={tip.over_goals} under={1 - tip.over_goals} />
 
-      {/* Corners — club only */}
-      {!isIntlCard && tip.over_corners !== undefined && (
+      {/* Both Teams to Score */}
+      {tip.btts !== undefined && (
+        <BinaryBlock
+          label="Both Teams to Score"
+          over={tip.btts}
+          under={1 - tip.btts}
+          labels={['Yes', 'No']}
+        />
+      )}
+
+      {/* Corners */}
+      {tip.over_corners !== undefined && (
         <BinaryBlock label="Corners — Over / Under 9.5" over={tip.over_corners} under={1 - tip.over_corners} />
       )}
 

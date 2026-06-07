@@ -16,10 +16,12 @@ Run:
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
-import os, sys, pickle, warnings, time
+import os, sys, pickle, warnings, time, math, logging
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+
+_log = logging.getLogger(__name__)
 
 warnings.filterwarnings('ignore')
 
@@ -167,8 +169,29 @@ def _form_from_ranking(team: str) -> dict:
     }
 
 
+def _btts_prob(home_gs: float, away_gs: float) -> float:
+    """P(both teams score ≥1 goal) using Poisson approximation."""
+    p_h = 1.0 - math.exp(-max(0.05, home_gs))
+    p_a = 1.0 - math.exp(-max(0.05, away_gs))
+    return round(p_h * p_a, 4)
+
+
+def _corners_prob(home_gs: float, away_gs: float,
+                  home_gc: float, away_gc: float) -> float:
+    """Estimate P(total corners > 9.5) from team attacking/defensive style."""
+    avg = 1.2
+    exp = (9.2
+           + (home_gs - avg) * 1.1
+           + (away_gs - avg) * 1.1
+           + (home_gc - avg) * 0.35
+           + (away_gc - avg) * 0.35)
+    z = (exp - 9.5) / (2.2 * math.sqrt(2))
+    p = round(0.5 * (1.0 + math.erf(z)), 4)
+    return max(0.20, min(0.82, p))
+
+
 def _pure_ranking_predict(home: str, away: str) -> dict:
-    """ELO-style fallback — no ML models or data files required."""
+    """ELO-style last-resort — no ML models or data files required."""
     hp       = _FIFA_PTS.get(home, 1400)
     ap       = _FIFA_PTS.get(away, 1400)
     diff     = hp - ap
@@ -178,44 +201,62 @@ def _pure_ranking_predict(home: str, away: str) -> dict:
     scale    = 1.0 - p_draw
     p_home   = round(p_home_r * scale, 4)
     p_away   = round((1.0 - p_home_r) * scale, 4)
-    avg      = (hp + ap) / 2.0
-    p_over   = round(max(0.35, min(0.72, 0.48 + (avg - 1550) / 2000.0 - abs_diff / 4000.0)), 4)
+    avg_pts  = (hp + ap) / 2.0
+    p_over   = round(max(0.35, min(0.72,
+                    0.48 + (avg_pts - 1550) / 2000.0 - abs_diff / 4000.0)), 4)
+    n_h = max(0.0, min(1.0, (hp - 1200) / 700.0))
+    n_a = max(0.0, min(1.0, (ap - 1200) / 700.0))
+    h_gs = 0.85 + n_h * 1.25;  a_gs = 0.85 + n_a * 1.25
+    h_gc = 1.65 - n_h * 0.90;  a_gc = 1.65 - n_a * 0.90
     return {
-        'home_win': p_home, 'draw': p_draw, 'away_win': p_away,
-        'over_goals': p_over, 'resolved_home': home, 'resolved_away': away,
+        'home_win':     p_home,   'draw':         p_draw,
+        'away_win':     p_away,   'over_goals':   p_over,
+        'btts':         _btts_prob(h_gs, a_gs),
+        'over_corners': _corners_prob(h_gs, a_gs, h_gc, a_gc),
+        'resolved_home': home,    'resolved_away': away,
     }
 
 
 def _wc_predict(home, away, is_neutral=True):
-    # Tier 1 — full model with historical data (works locally)
+    """
+    Predict international match — same logic as worldcup_predict.py terminal tool.
+    Tier 1: exact historical-data path (identical to terminal output).
+    Tier 2: worldcup models + FIFA ranking-derived features (Railway fallback).
+    Tier 3: pure ELO formula (last resort, no files needed).
+    Failures are logged so the Railway log reveals any data/model issues.
+    """
+    # ── Tier 1: exact same path as worldcup_predict.py predict() ─────────────
     try:
-        df = _intl()
+        df        = _intl()          # loads data/results.csv
         all_teams = sorted(set(df['home_team'].tolist() + df['away_team'].tolist()))
-        ta  = resolve_team(home, all_teams)
-        tb  = resolve_team(away, all_teams)
-        imp = get_importance('FIFA World Cup')
-        hf  = get_team_form(df, ta)
-        af  = get_team_form(df, tb)
-        h2h = get_h2h(df, ta, tb)
+        ta        = resolve_team(home, all_teams)
+        tb        = resolve_team(away, all_teams)
+        imp       = get_importance('FIFA World Cup')
+        hf        = get_team_form(df, ta)
+        af        = get_team_form(df, tb)
+        h2h       = get_h2h(df, ta, tb)
         hf.update(get_major_form(df, ta))
         af.update(get_major_form(df, tb))
-        X   = build_feature_vector(hf, af, h2h, wc_result['features'],
-                                   is_neutral=is_neutral,
-                                   tournament_importance=imp)
-        rp  = wc_result['model'].predict_proba(X)[0]
-        gp  = wc_goals['model'].predict_proba(X)[0]
+        X         = build_feature_vector(hf, af, h2h, wc_result['features'],
+                                         is_neutral=is_neutral,
+                                         tournament_importance=imp)
+        rp        = wc_result['model'].predict_proba(X)[0]   # [away, draw, home]
+        gp        = wc_goals['model'].predict_proba(X)[0]    # [under, over]
         return {
             'home_win':      round(float(rp[2]), 4),
             'draw':          round(float(rp[1]), 4),
             'away_win':      round(float(rp[0]), 4),
             'over_goals':    round(float(gp[1]), 4),
+            'btts':          _btts_prob(hf['goals_scored'], af['goals_scored']),
+            'over_corners':  _corners_prob(hf['goals_scored'], af['goals_scored'],
+                                           hf['goals_conceded'], af['goals_conceded']),
             'resolved_home': ta,
             'resolved_away': tb,
         }
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.warning('wc_predict Tier1 failed %s vs %s — %s', home, away, exc)
 
-    # Tier 2 — worldcup ML models + FIFA ranking-derived features (Railway path)
+    # ── Tier 2: worldcup models + FIFA ranking features ───────────────────────
     if wc_result and wc_goals:
         try:
             hf       = _form_from_ranking(home)
@@ -234,13 +275,16 @@ def _wc_predict(home, away, is_neutral=True):
                 'draw':          round(float(rp[1]), 4),
                 'away_win':      round(float(rp[0]), 4),
                 'over_goals':    round(float(gp[1]), 4),
+                'btts':          _btts_prob(hf['goals_scored'], af['goals_scored']),
+                'over_corners':  _corners_prob(hf['goals_scored'], af['goals_scored'],
+                                               hf['goals_conceded'], af['goals_conceded']),
                 'resolved_home': home,
                 'resolved_away': away,
             }
-        except Exception:
-            pass
+        except Exception as exc:
+            _log.warning('wc_predict Tier2 failed %s vs %s — %s', home, away, exc)
 
-    # Tier 3 — pure ELO/ranking formula (no models or data files needed)
+    # ── Tier 3: pure ELO formula ──────────────────────────────────────────────
     return _pure_ranking_predict(home, away)
 
 WC_FIXTURES_RAW = [
@@ -281,13 +325,13 @@ def _build_wc_fixtures():
     for raw in WC_FIXTURES_RAW:
         try:
             pred = _wc_predict(raw['home'], raw['away'])
-        except Exception as e:
-            pred = {'home_win': 0.40, 'draw': 0.28, 'away_win': 0.32,
-                    'over_goals': 0.52,
-                    'resolved_home': raw['home'], 'resolved_away': raw['away']}
+        except Exception as exc:
+            _log.error('_build_wc_fixtures failed for %s vs %s: %s',
+                       raw['home'], raw['away'], exc)
+            pred = _pure_ranking_predict(raw['home'], raw['away'])
 
         ph, pd_, pa = pred['home_win'], pred['draw'], pred['away_win']
-        pg = pred['over_goals']
+        pg  = pred['over_goals']
         best_prob = max(ph, pd_, pa)
         if best_prob == ph:
             bet = {'label': f"{raw['home']} to Win", 'confidence': ph}
@@ -298,9 +342,11 @@ def _build_wc_fixtures():
 
         fixtures.append({
             **raw,
-            'result': {'home': ph, 'draw': pd_, 'away': pa},
-            'over_goals': pg,
-            'best_bet': bet,
+            'result':       {'home': ph, 'draw': pd_, 'away': pa},
+            'over_goals':   pg,
+            'btts':         pred.get('btts',         _btts_prob(1.2, 1.2)),
+            'over_corners': pred.get('over_corners', 0.52),
+            'best_bet':     bet,
         })
     return fixtures
 

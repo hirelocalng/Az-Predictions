@@ -34,3 +34,13 @@ Press CTRL+C to quit
  * Restarting with stat
  * Debugger is active!
  * Debugger PIN: 136-750-838
+127.0.0.1 - - [07/Jun/2026 12:55:23] "GET /api/club/tips HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 12:55:35] "GET /api/club/tips HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 12:55:49] "GET /api/daily-tips HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET / HTTP/1.1" 304 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /assets/index-BtrKQ06I.css HTTP/1.1" 304 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /assets/index-CwZExsK0.js HTTP/1.1" 304 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/daily-tips HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/countdown HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/worldcup/fixtures HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/club/tips HTTP/1.1" 200 -

@@ -28,7 +28,7 @@ export default function DailyTipsSection() {
         <p className="section-sub">
           Live fixtures from World Cup 2026, Champions League, Premier League, La Liga, Bundesliga,
           Serie A, Ligue 1, Brazil Série A, and international warm-up matches.
-          Only predictions with ≥55% model confidence shown, ranked highest first.
+          Only predictions with ≥50% model confidence shown, ranked highest first.
         </p>
       </div>
 

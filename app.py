@@ -19,7 +19,7 @@ from flask_cors import CORS
 import os, sys, pickle, warnings, time
 import numpy as np
 import pandas as pd
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 warnings.filterwarnings('ignore')
 
@@ -310,12 +310,37 @@ print(f"  WC fixtures ready ({len(_WC_FIXTURES)} matches)", flush=True)
 
 @app.route('/api/club/tips')
 def club_tips():
-    return jsonify(_CLUB_TIPS)
+    now = datetime.now()
+    filtered = []
+    for tip in _CLUB_TIPS:
+        label = tip.get('date_label', '').lower()
+        if label == 'today':
+            try:
+                kickoff = datetime.strptime(tip['time'], "%H:%M").replace(
+                    year=now.year, month=now.month, day=now.day
+                )
+                if now > kickoff + timedelta(minutes=110):
+                    continue
+            except Exception:
+                pass
+        filtered.append(tip)
+    return jsonify(filtered)
 
 
 @app.route('/api/worldcup/fixtures')
 def wc_fixtures():
-    return jsonify(_WC_FIXTURES)
+    now = datetime.now(timezone.utc)
+    upcoming = []
+    for f in _WC_FIXTURES:
+        try:
+            kickoff = datetime.fromisoformat(
+                f['date'] + 'T' + f['time'] + ':00'
+            ).replace(tzinfo=timezone.utc)
+            if kickoff + timedelta(minutes=120) > now:
+                upcoming.append(f)
+        except Exception:
+            upcoming.append(f)
+    return jsonify(upcoming)
 
 
 @app.route('/api/countdown')

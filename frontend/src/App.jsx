@@ -16,7 +16,7 @@ function Header({ active, setActive }) {
     <header className="header">
       <div className="header-logo">
         <div className="logo-mark"><LogoIcon /></div>
-        Predictor<span className="logo-accent">X</span>
+        Az-<span className="logo-accent">Predictions</span>
       </div>
 
       <nav className="header-nav">
@@ -101,7 +101,7 @@ export default function App() {
       </main>
 
       <footer className="footer">
-        <strong>PredictorX</strong> — AI Football Predictions &nbsp;·&nbsp;
+        <strong>Az-Predictions</strong> — AI Football Predictions &nbsp;·&nbsp;
         Models trained on public match data &nbsp;·&nbsp;
         For entertainment purposes only<br />
         Please gamble responsibly. 18+

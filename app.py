@@ -7,8 +7,9 @@ Endpoints:
   GET /api/worldcup/countdown seconds to next WC 2026 match
 
 Club tips: uses result_model / goals_model / corners_model (train.py).
-WC tips  : uses worldcup_result_model / worldcup_goals_model via the
-           helper functions in worldcup_predict.py (no double-loading).
+WC tips  : predict_match() is defined directly in this file (copied from
+           worldcup_predict.py) so the exact same code runs for both the
+           terminal tool and the API — no imports, no divergence.
 
 Run:
     python app.py
@@ -16,8 +17,9 @@ Run:
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
-import os, sys, pickle, warnings, time, logging
+import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata
 import numpy as np
+import pandas as pd
 from datetime import datetime, timezone, timedelta
 
 _log = logging.getLogger(__name__)
@@ -45,10 +47,338 @@ club_corners = _load('corners_model.pkl')
 LEAGUE_MAP  = club_result['league_map']  if club_result  else {}
 RES_ENCODER = club_result['result_encoder'] if club_result else None
 
-# ── Load WC helpers & models ──────────────────────────────────────────────────
+# ── International prediction — copied verbatim from worldcup_predict.py ───────
+# Every constant, every helper, every formula is identical to the terminal tool.
+
+_WC_DATA_PATH         = 'data/results.csv'
+_WC_RESULT_MODEL_PATH = 'worldcup_result_model.pkl'
+_WC_GOALS_MODEL_PATH  = 'worldcup_goals_model.pkl'
+_WC_FORM_WINDOW       = 10
+
+_TOURNAMENT_IMPORTANCE = {
+    'FIFA World Cup':                            1.00,
+    'Confederations Cup':                        0.92,
+    'UEFA Euro':                                 0.90,
+    'Copa America':                              0.88,
+    'African Cup of Nations':                    0.85,
+    'FIFA World Cup qualification':              0.85,
+    'Gold Cup':                                  0.80,
+    'AFC Asian Cup':                             0.82,
+    'CONCACAF Championship':                     0.78,
+    'Olympic Games':                             0.75,
+    'UEFA Euro qualification':                   0.75,
+    'British Home Championship':                 0.72,
+    'UEFA Nations League':                       0.72,
+    'African Cup of Nations qualification':      0.70,
+    'AFC Asian Cup qualification':               0.68,
+    'CONCACAF Nations League':                   0.68,
+    'Gold Cup qualification':                    0.65,
+    'Copa America qualification':                0.65,
+    'Oceania Nations Cup':                       0.65,
+    'CONCACAF Championship qualification':       0.60,
+    'CONCACAF Nations League qualification':     0.55,
+    'Oceania Nations Cup qualification':         0.55,
+    'FIFA Series':                               0.40,
+    'Friendly':                                  0.30,
+}
+
+_TEAM_ALIASES = {
+    'usa':                          'United States',
+    'us':                           'United States',
+    'america':                      'United States',
+    'uk':                           'England',
+    'great britain':                'England',
+    'south korea':                  'South Korea',
+    'korea':                        'South Korea',
+    'korea republic':               'South Korea',
+    'republic of korea':            'South Korea',
+    'dpr korea':                    'North Korea',
+    'north korea':                  'North Korea',
+    'iran':                         'Iran',
+    'russia':                       'Russia',
+    'czechia':                      'Czech Republic',
+    'czech':                        'Czech Republic',
+    'türkiye':                      'Turkey',
+    'turkiye':                      'Turkey',
+    'ivory coast':                  'Ivory Coast',
+    "cote d'ivoire":                'Ivory Coast',
+    "côte d'ivoire":                'Ivory Coast',
+    'bosnia':                       'Bosnia and Herzegovina',
+    'bosnia & herzegovina':         'Bosnia and Herzegovina',
+    'bosnia-herzegovina':           'Bosnia and Herzegovina',
+    'dr congo':                     'DR Congo',
+    'democratic republic of congo': 'DR Congo',
+    'congo dr':                     'DR Congo',
+    'drc':                          'DR Congo',
+    'republic of ireland':          'Republic of Ireland',
+    'northern ireland':             'Northern Ireland',
+    'cape verde':                   'Cape Verde',
+    'cabo verde':                   'Cape Verde',
+    'curacao':                      'Curaçao',
+    'trinidad & tobago':            'Trinidad and Tobago',
+    'trinidad':                     'Trinidad and Tobago',
+    'north macedonia':              'North Macedonia',
+    'uae':                          'United Arab Emirates',
+    'saudi arabia':                 'Saudi Arabia',
+    'new zealand':                  'New Zealand',
+}
+
+
+def _wc_norm(text):
+    return unicodedata.normalize('NFKD', str(text)).encode('ascii', 'ignore').decode('ascii')
+
+
+def _wc_get_importance(tournament):
+    t_norm = _wc_norm(tournament)
+    for key, val in _TOURNAMENT_IMPORTANCE.items():
+        if t_norm == _wc_norm(key):
+            return val
+    t_lower = t_norm.lower()
+    if 'world cup' in t_lower:
+        return 0.80 if 'qualif' not in t_lower else 0.75
+    if 'qualif' in t_lower:
+        return 0.60
+    if 'friendly' in t_lower:
+        return 0.30
+    if any(x in t_lower for x in ['cup', 'championship', 'nations', 'league']):
+        return 0.60
+    return 0.45
+
+
+def _wc_load_data():
+    df = pd.read_csv(_WC_DATA_PATH, encoding='latin-1')
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.dropna(subset=['home_score', 'away_score'])
+    df = df.sort_values('date').reset_index(drop=True)
+    return df
+
+
+def _wc_load_models():
+    with open(_WC_RESULT_MODEL_PATH, 'rb') as f:
+        rd = pickle.load(f)
+    with open(_WC_GOALS_MODEL_PATH, 'rb') as f:
+        gd = pickle.load(f)
+    return rd['model'], rd['features'], gd['model'], gd['features']
+
+
+def _wc_resolve_team(name, all_teams):
+    alias = _TEAM_ALIASES.get(name.lower().strip())
+    if alias:
+        return alias
+    name_lower = name.lower().strip()
+    for t in all_teams:
+        if t.lower() == name_lower:
+            return t
+    matches = difflib.get_close_matches(name, all_teams, n=5, cutoff=0.5)
+    if matches:
+        raise ValueError(
+            f"Team '{name}' not found. Did you mean: {', '.join(matches)}"
+        )
+    raise ValueError(f"Team '{name}' not found in dataset.")
+
+
+def _wc_get_team_form(df, team, n=_WC_FORM_WINDOW):
+    mask = (df['home_team'] == team) | (df['away_team'] == team)
+    matches = df[mask].sort_values('date').tail(n)
+    if len(matches) == 0:
+        return {k: 0.0 for k in [
+            'win_rate', 'draw_rate', 'loss_rate',
+            'goals_scored', 'goals_conceded', 'form_pts', 'form_count', 'goal_diff'
+        ]}
+    wins = draws = losses = gf = ga = 0
+    for _, row in matches.iterrows():
+        if row['home_team'] == team:
+            g, gc = row['home_score'], row['away_score']
+        else:
+            g, gc = row['away_score'], row['home_score']
+        gf += g; ga += gc
+        if g > gc:       wins += 1
+        elif g == gc:    draws += 1
+        else:            losses += 1
+    n_m = len(matches)
+    return {
+        'win_rate':       wins / n_m,
+        'draw_rate':      draws / n_m,
+        'loss_rate':      losses / n_m,
+        'goals_scored':   gf / n_m,
+        'goals_conceded': ga / n_m,
+        'form_pts':       (wins * 3 + draws) / n_m,
+        'form_count':     float(n_m),
+        'goal_diff':      (gf - ga) / n_m,
+    }
+
+
+def _wc_get_major_form(df, team, n=10, importance_threshold=0.70):
+    mask = (
+        ((df['home_team'] == team) | (df['away_team'] == team)) &
+        (df['tournament'].apply(_wc_get_importance) >= importance_threshold)
+    )
+    matches = df[mask].sort_values('date').tail(n)
+    if len(matches) == 0:
+        return {'major_win_rate': 0.0, 'major_form_pts': 0.0, 'major_count': 0.0}
+    wins = pts = 0
+    for _, row in matches.iterrows():
+        if row['home_team'] == team:
+            gf, ga = row['home_score'], row['away_score']
+        else:
+            gf, ga = row['away_score'], row['home_score']
+        if gf > ga:
+            wins += 1; pts += 3
+        elif gf == ga:
+            pts += 1
+    n_m = len(matches)
+    return {
+        'major_win_rate': wins / n_m,
+        'major_form_pts': pts / n_m,
+        'major_count':    float(n_m),
+    }
+
+
+def _wc_get_h2h(df, team_a, team_b, n=20):
+    mask = (
+        ((df['home_team'] == team_a) & (df['away_team'] == team_b)) |
+        ((df['home_team'] == team_b) & (df['away_team'] == team_a))
+    )
+    h2h = df[mask].sort_values('date').tail(n)
+    if len(h2h) == 0:
+        return {'count': 0, 'home_win_rate': 1/3}
+    wins_a = 0
+    for _, row in h2h.iterrows():
+        if row['home_team'] == team_a:
+            if row['home_score'] > row['away_score']: wins_a += 1
+        else:
+            if row['away_score'] > row['home_score']: wins_a += 1
+    return {
+        'count':         float(len(h2h)),
+        'home_win_rate': wins_a / len(h2h),
+    }
+
+
+def _wc_build_feature_vector(home_form, away_form, h2h, features,
+                              is_neutral=True, tournament_importance=1.0):
+    row = {
+        'home_win_rate':       home_form['win_rate'],
+        'home_draw_rate':      home_form['draw_rate'],
+        'home_loss_rate':      home_form['loss_rate'],
+        'home_goals_scored':   home_form['goals_scored'],
+        'home_goals_conceded': home_form['goals_conceded'],
+        'home_form_pts':       home_form['form_pts'],
+        'home_form_count':     home_form['form_count'],
+        'home_goal_diff':      home_form['goal_diff'],
+        'away_win_rate':       away_form['win_rate'],
+        'away_draw_rate':      away_form['draw_rate'],
+        'away_loss_rate':      away_form['loss_rate'],
+        'away_goals_scored':   away_form['goals_scored'],
+        'away_goals_conceded': away_form['goals_conceded'],
+        'away_form_pts':       away_form['form_pts'],
+        'away_form_count':     away_form['form_count'],
+        'away_goal_diff':      away_form['goal_diff'],
+        'is_neutral':              int(is_neutral),
+        'tournament_importance':   tournament_importance,
+        'h2h_count':           h2h['count'],
+        'h2h_home_win_rate':   h2h['home_win_rate'],
+        'win_rate_diff':       home_form['win_rate']      - away_form['win_rate'],
+        'goals_scored_diff':   home_form['goals_scored']  - away_form['goals_scored'],
+        'goals_conceded_diff': home_form['goals_conceded']- away_form['goals_conceded'],
+        'form_pts_diff':       home_form['form_pts']      - away_form['form_pts'],
+        'home_major_win_rate':  home_form.get('major_win_rate', 0.0),
+        'home_major_form_pts':  home_form.get('major_form_pts', 0.0),
+        'home_major_count':     home_form.get('major_count', 0.0),
+        'away_major_win_rate':  away_form.get('major_win_rate', 0.0),
+        'away_major_form_pts':  away_form.get('major_form_pts', 0.0),
+        'away_major_count':     away_form.get('major_count', 0.0),
+    }
+    return np.array([[row[f] for f in features]])
+
+
+def _api_btts_prob(home_gs: float, away_gs: float) -> float:
+    p_h = 1.0 - math.exp(-max(0.05, home_gs))
+    p_a = 1.0 - math.exp(-max(0.05, away_gs))
+    return round(p_h * p_a, 4)
+
+
+def _api_corners_prob(home_gs: float, away_gs: float,
+                      home_gc: float, away_gc: float) -> float:
+    avg = 1.2
+    exp_c = (9.2
+             + (home_gs - avg) * 1.1 + (away_gs - avg) * 1.1
+             + (home_gc - avg) * 0.35 + (away_gc - avg) * 0.35)
+    z = (exp_c - 9.5) / (2.2 * math.sqrt(2))
+    p = round(0.5 * (1.0 + math.erf(z)), 4)
+    return max(0.20, min(0.82, p))
+
+
+_PRED_MODELS = None   # (result_model, res_features, goals_model, goals_features)
+_PRED_DF     = None   # loaded DataFrame
+_ALL_TEAMS   = None   # sorted team list
+
+
+def predict_match(home_raw, away_raw, is_neutral=True,
+                  tournament='FIFA World Cup'):
+    """
+    Programmatic version of predict() — identical feature engineering, same
+    model calls, same probabilities. Returns a dict instead of printing.
+
+    Models and data are loaded once and cached globally for API throughput.
+
+    Returns
+    -------
+    dict  {home_win, draw, away_win, over_goals, btts, over_corners,
+           resolved_home, resolved_away}
+
+    Raises
+    ------
+    ValueError  if either team name cannot be resolved from the dataset.
+    """
+    global _PRED_MODELS, _PRED_DF, _ALL_TEAMS
+    if _PRED_MODELS is None:
+        _PRED_MODELS = _wc_load_models()
+    if _PRED_DF is None:
+        _PRED_DF   = _wc_load_data()
+        _ALL_TEAMS = sorted(set(
+            _PRED_DF['home_team'].tolist() + _PRED_DF['away_team'].tolist()
+        ))
+
+    result_model, res_features, goals_model, _ = _PRED_MODELS
+    df        = _PRED_DF
+    all_teams = _ALL_TEAMS
+
+    team_a = _wc_resolve_team(home_raw, all_teams)
+    team_b = _wc_resolve_team(away_raw, all_teams)
+
+    importance = _wc_get_importance(tournament)
+
+    home_form = _wc_get_team_form(df, team_a)
+    away_form = _wc_get_team_form(df, team_b)
+    h2h       = _wc_get_h2h(df, team_a, team_b)
+
+    home_form.update(_wc_get_major_form(df, team_a))
+    away_form.update(_wc_get_major_form(df, team_b))
+
+    X = _wc_build_feature_vector(home_form, away_form, h2h, res_features,
+                                  is_neutral=is_neutral,
+                                  tournament_importance=importance)
+
+    res_proba   = result_model.predict_proba(X)[0]   # [away_win, draw, home_win]
+    goals_proba = goals_model.predict_proba(X)[0]    # [under, over]
+
+    return {
+        'home_win':      float(res_proba[2]),
+        'draw':          float(res_proba[1]),
+        'away_win':      float(res_proba[0]),
+        'over_goals':    float(goals_proba[1]),
+        'btts':          _api_btts_prob(home_form['goals_scored'], away_form['goals_scored']),
+        'over_corners':  _api_corners_prob(
+                             home_form['goals_scored'], away_form['goals_scored'],
+                             home_form['goals_conceded'], away_form['goals_conceded']),
+        'resolved_home': team_a,
+        'resolved_away': team_b,
+    }
+
+
+# ── Fetch fixtures helpers ────────────────────────────────────────────────────
 
 sys.path.insert(0, os.path.dirname(__file__))
-from worldcup_predict import predict_match
 from fetch_fixtures import get_daily_tips, get_club_tips, get_intl_tips
 
 # ── Club feature builder ──────────────────────────────────────────────────────

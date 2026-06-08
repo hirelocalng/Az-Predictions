@@ -17,6 +17,7 @@ Run:
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
+from contextlib import contextmanager
 import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading
 import numpy as np
 import pandas as pd
@@ -48,11 +49,67 @@ club_corners = _load(os.path.join(_BASE_DIR, 'corners_model.pkl'))
 LEAGUE_MAP  = club_result['league_map']  if club_result  else {}
 RES_ENCODER = club_result['result_encoder'] if club_result else None
 
-# ── Prediction history ────────────────────────────────────────────────────────
+# ── Prediction history (PostgreSQL primary, JSON fallback) ────────────────────
 
 _HISTORY_PATH = os.path.join(_BASE_DIR, 'prediction_history.json')
 _HISTORY_LOCK = threading.Lock()
+_DB_URL       = os.environ.get('DATABASE_URL', '')
 
+
+@contextmanager
+def _db():
+    """Yield (conn, cur); both None when DATABASE_URL is unset."""
+    if not _DB_URL:
+        yield None, None
+        return
+    conn = cur = None
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_DB_URL)
+        cur  = conn.cursor()
+        yield conn, cur
+        conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
+    finally:
+        if cur:  cur.close()
+        if conn: conn.close()
+
+
+def _init_db():
+    """Create predictions table if it doesn't already exist."""
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id                SERIAL PRIMARY KEY,
+                    match_id          VARCHAR(255) UNIQUE NOT NULL,
+                    home_team         VARCHAR(100),
+                    away_team         VARCHAR(100),
+                    match_date        VARCHAR(20),
+                    match_time        VARCHAR(10),
+                    competition       VARCHAR(200),
+                    predicted_winner  VARCHAR(200),
+                    predicted_goals   VARCHAR(20),
+                    predicted_btts    VARCHAR(10),
+                    predicted_corners VARCHAR(20),
+                    actual_home_score INTEGER,
+                    actual_away_score INTEGER,
+                    result_status     VARCHAR(10) DEFAULT 'PENDING',
+                    kickoff_utc       VARCHAR(50),
+                    created_at        TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+        _log.info('DB: predictions table ready')
+    except Exception as e:
+        _log.error('DB init: %s', e)
+
+
+# ── JSON helpers (used when DATABASE_URL is unset) ────────────────────────────
 
 def _read_raw_history():
     try:
@@ -77,53 +134,102 @@ def _match_key(home, away, date):
 
 
 def _save_prediction(tip):
-    home = (tip.get('home_team') or tip.get('home') or '').strip()
-    away = (tip.get('away_team') or tip.get('away') or '').strip()
-    kickoff = (tip.get('utc_kickoff') or '').strip()
+    home       = (tip.get('home_team') or tip.get('home') or '').strip()
+    away       = (tip.get('away_team') or tip.get('away') or '').strip()
+    kickoff    = (tip.get('utc_kickoff') or '').strip()
     match_date = kickoff[:10] if kickoff else (tip.get('date') or '')
     if not home or not away or not match_date:
         return
-    best_bet = tip.get('best_bet') or {}
+    best_bet   = tip.get('best_bet') or {}
     over_goals = tip.get('over_goals', 0.5)
     btts       = tip.get('btts', 0.48)
     corners    = tip.get('over_corners', 0.52)
+    mid        = _match_key(home, away, match_date)
+    mtime      = tip.get('time', kickoff[11:16] if len(kickoff) > 15 else '')
+    comp       = (tip.get('league') or tip.get('competition') or 'Football')
+    pw         = best_bet.get('label', '')
+    pg_str     = 'Over 2.5' if over_goals >= 0.5 else 'Under 2.5'
+    btts_str   = 'Yes' if btts >= 0.5 else 'No'
+    cor_str    = 'Over 9.5' if corners >= 0.5 else 'Under 9.5'
+
+    # ── PostgreSQL ────────────────────────────────────────────────────────────
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    INSERT INTO predictions
+                        (match_id, home_team, away_team, match_date, match_time,
+                         competition, predicted_winner, predicted_goals,
+                         predicted_btts, predicted_corners, result_status, kickoff_utc)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
+                    ON CONFLICT (match_id) DO NOTHING
+                """, (mid, home, away, match_date, mtime, comp, pw,
+                      pg_str, btts_str, cor_str, kickoff))
+                return
+    except Exception as e:
+        _log.warning('DB save failed, falling back to JSON: %s', e)
+
+    # ── JSON fallback ─────────────────────────────────────────────────────────
     entry = {
-        'match_id':          _match_key(home, away, match_date),
-        'home_team':         home,
-        'away_team':         away,
-        'match_date':        match_date,
-        'match_time':        tip.get('time', kickoff[11:16] if len(kickoff) > 15 else ''),
-        'competition':       (tip.get('league') or tip.get('competition') or 'Football'),
-        'predicted_winner':  best_bet.get('label', ''),
-        'predicted_goals':   'Over 2.5' if over_goals >= 0.5 else 'Under 2.5',
-        'predicted_btts':    'Yes' if btts >= 0.5 else 'No',
-        'predicted_corners': 'Over 9.5' if corners >= 0.5 else 'Under 9.5',
-        'actual_home_score': None,
-        'actual_away_score': None,
-        'result_status':     'PENDING',
-        'kickoff_utc':       kickoff,
-        'saved_at':          datetime.now(timezone.utc).isoformat(),
+        'match_id': mid, 'home_team': home, 'away_team': away,
+        'match_date': match_date, 'match_time': mtime, 'competition': comp,
+        'predicted_winner': pw, 'predicted_goals': pg_str,
+        'predicted_btts': btts_str, 'predicted_corners': cor_str,
+        'actual_home_score': None, 'actual_away_score': None,
+        'result_status': 'PENDING', 'kickoff_utc': kickoff,
+        'saved_at': datetime.now(timezone.utc).isoformat(),
     }
     with _HISTORY_LOCK:
         data = _read_raw_history()
-        existing = {p['match_id'] for p in data['predictions']}
-        if entry['match_id'] not in existing:
+        if mid not in {p['match_id'] for p in data['predictions']}:
             data['predictions'].append(entry)
             _write_raw_history(data)
 
 
 def _get_history():
+    """Return {predictions: [...]} from DB or JSON fallback."""
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, match_date, match_time,
+                           competition, predicted_winner, predicted_goals,
+                           predicted_btts, predicted_corners,
+                           actual_home_score, actual_away_score,
+                           result_status, kickoff_utc, created_at
+                    FROM predictions
+                    ORDER BY match_date DESC, created_at DESC
+                """)
+                cols = [d[0] for d in cur.description]
+                rows = []
+                for r in cur.fetchall():
+                    row = dict(zip(cols, r))
+                    if row.get('created_at'):
+                        row['saved_at'] = row['created_at'].isoformat()
+                    row.pop('created_at', None)
+                    rows.append(row)
+                return {'predictions': rows}
+    except Exception as e:
+        _log.warning('DB get_history failed: %s', e)
     with _HISTORY_LOCK:
         return _read_raw_history()
 
 
 def _completed_keys():
+    """Return set of match_ids that are WON or LOST."""
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute(
+                    "SELECT match_id FROM predictions "
+                    "WHERE result_status IN ('WON','LOST')"
+                )
+                return {r[0] for r in cur.fetchall()}
+    except Exception as e:
+        _log.warning('DB completed_keys failed: %s', e)
     data = _get_history()
-    return {
-        p['match_id']
-        for p in data.get('predictions', [])
-        if p['result_status'] in ('WON', 'LOST')
-    }
+    return {p['match_id'] for p in data.get('predictions', [])
+            if p['result_status'] in ('WON', 'LOST')}
 
 
 # ── International prediction — copied verbatim from worldcup_predict.py ───────
@@ -559,10 +665,64 @@ def _fetch_tsdb_result(home_team, away_team, match_date):
     return None
 
 
+def _resolve_result(pw, home, away, hs, as_):
+    """Return 'WON' or 'LOST' based on predicted winner vs actual score."""
+    pw_l, home_l, away_l = pw.lower(), home.lower(), away.lower()
+    if hs > as_:
+        return 'WON' if home_l in pw_l else 'LOST'
+    elif as_ > hs:
+        return 'WON' if away_l in pw_l else 'LOST'
+    else:
+        return 'WON' if 'draw' in pw_l else 'LOST'
+
+
 def _check_pending_results():
     """APScheduler job: fetch final scores for PENDING predictions past kickoff."""
     _log.info('APScheduler: checking pending predictions…')
     now = datetime.now(timezone.utc)
+
+    # ── PostgreSQL path ────────────────────────────────────────────────────────
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, match_date,
+                           predicted_winner, kickoff_utc
+                    FROM predictions WHERE result_status = 'PENDING'
+                """)
+                pending = cur.fetchall()
+                for mid, home, away, match_date, pw, kickoff_str in pending:
+                    try:
+                        if kickoff_str:
+                            kickoff = datetime.fromisoformat(
+                                kickoff_str.replace('Z', '+00:00'))
+                        elif match_date:
+                            kickoff = datetime.fromisoformat(
+                                f'{match_date}T23:00:00+00:00')
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                    if kickoff + timedelta(hours=2) > now:
+                        continue
+                    result = _fetch_tsdb_result(home, away, match_date)
+                    if result is None:
+                        continue
+                    hs, as_ = result
+                    status  = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                    cur.execute("""
+                        UPDATE predictions
+                        SET actual_home_score=%s, actual_away_score=%s,
+                            result_status=%s
+                        WHERE match_id=%s
+                    """, (hs, as_, status, mid))
+                    _log.info('DB result: %s %d-%d %s → %s',
+                              home, hs, as_, away, status)
+                return
+    except Exception as e:
+        _log.warning('DB check_pending failed, falling back to JSON: %s', e)
+
+    # ── JSON fallback ──────────────────────────────────────────────────────────
     with _HISTORY_LOCK:
         data = _read_raw_history()
         changed = False
@@ -588,18 +748,11 @@ def _check_pending_results():
             hs, as_ = result
             pred['actual_home_score'] = hs
             pred['actual_away_score'] = as_
-            pw     = pred.get('predicted_winner', '').lower()
-            home_l = pred['home_team'].lower()
-            away_l = pred['away_team'].lower()
-            if hs > as_:
-                won = home_l in pw
-            elif as_ > hs:
-                won = away_l in pw
-            else:
-                won = 'draw' in pw
-            pred['result_status'] = 'WON' if won else 'LOST'
+            pred['result_status'] = _resolve_result(
+                pred.get('predicted_winner', ''),
+                pred['home_team'], pred['away_team'], hs, as_)
             changed = True
-            _log.info('Result resolved: %s %d-%d %s → %s',
+            _log.info('JSON result: %s %d-%d %s → %s',
                       pred['home_team'], hs, as_, pred['away_team'], pred['result_status'])
         if changed:
             _write_raw_history(data)
@@ -883,6 +1036,7 @@ def _build_wc_fixtures():
     return fixtures
 
 
+_init_db()
 print("Loading predictions…", flush=True)
 _WC_FIXTURES = _build_wc_fixtures()
 print(f"  WC fixtures ready ({len(_WC_FIXTURES)} matches)", flush=True)

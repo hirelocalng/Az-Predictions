@@ -294,54 +294,55 @@ def _wc_predict(home, away, is_neutral=True):
     return _pure_ranking_predict(home, away)
 
 WC_FIXTURES_RAW = [
-    # Group A — opener: Mexico vs South Africa, Estadio Azteca
+    # All times stored as UTC (EDT = UTC-4 in June; midnight crossovers adjust date)
+    # Group A — Mexico vs South Africa, Estadio Azteca  (3 pm EDT = 19:00 UTC)
     {"id":"wc1","group":"A","home":"Mexico","away":"South Africa",
      "home_code":"mx","away_code":"za",
-     "date":"2026-06-11","time":"15:00","venue":"Estadio Azteca, Mexico City"},
-    # Group B — opener: Canada vs Bosnia and Herzegovina, BMO Field
+     "date":"2026-06-11","time":"19:00","venue":"Estadio Azteca, Mexico City"},
+    # Group B — Canada vs Bosnia and Herzegovina, BMO Field  (3 pm EDT = 19:00 UTC)
     {"id":"wc2","group":"B","home":"Canada","away":"Bosnia and Herzegovina",
      "home_code":"ca","away_code":"ba",
-     "date":"2026-06-12","time":"15:00","venue":"BMO Field, Toronto"},
-    # Group C — opener: Brazil vs Morocco, MetLife Stadium
+     "date":"2026-06-12","time":"19:00","venue":"BMO Field, Toronto"},
+    # Group C — Brazil vs Morocco, MetLife Stadium  (6 pm EDT = 22:00 UTC)
     {"id":"wc3","group":"C","home":"Brazil","away":"Morocco",
      "home_code":"br","away_code":"ma",
-     "date":"2026-06-13","time":"18:00","venue":"MetLife Stadium, East Rutherford NJ"},
-    # Group D — opener: USA vs Paraguay, SoFi Stadium
+     "date":"2026-06-13","time":"22:00","venue":"MetLife Stadium, East Rutherford NJ"},
+    # Group D — USA vs Paraguay, SoFi Stadium  (9 pm EDT Jun 12 = 01:00 UTC Jun 13)
     {"id":"wc4","group":"D","home":"USA","away":"Paraguay",
      "home_code":"us","away_code":"py",
-     "date":"2026-06-12","time":"21:00","venue":"SoFi Stadium, Los Angeles"},
-    # Group E — opener: Germany vs Curacao, NRG Stadium
+     "date":"2026-06-13","time":"01:00","venue":"SoFi Stadium, Los Angeles"},
+    # Group E — Germany vs Curacao, NRG Stadium  (1 pm EDT = 17:00 UTC)
     {"id":"wc5","group":"E","home":"Germany","away":"Curacao",
      "home_code":"de","away_code":"cw",
-     "date":"2026-06-14","time":"13:00","venue":"NRG Stadium, Houston"},
-    # Group F — opener: Netherlands vs Japan, AT&T Stadium
+     "date":"2026-06-14","time":"17:00","venue":"NRG Stadium, Houston"},
+    # Group F — Netherlands vs Japan, AT&T Stadium  (4 pm EDT = 20:00 UTC)
     {"id":"wc6","group":"F","home":"Netherlands","away":"Japan",
      "home_code":"nl","away_code":"jp",
-     "date":"2026-06-14","time":"16:00","venue":"AT&T Stadium, Dallas"},
-    # Group G — opener: Belgium vs Egypt, Lumen Field
+     "date":"2026-06-14","time":"20:00","venue":"AT&T Stadium, Dallas"},
+    # Group G — Belgium vs Egypt, Lumen Field  (3 pm EDT = 19:00 UTC)
     {"id":"wc7","group":"G","home":"Belgium","away":"Egypt",
      "home_code":"be","away_code":"eg",
-     "date":"2026-06-15","time":"15:00","venue":"Lumen Field, Seattle"},
-    # Group H — opener: Spain vs Cape Verde, Mercedes-Benz Stadium
+     "date":"2026-06-15","time":"19:00","venue":"Lumen Field, Seattle"},
+    # Group H — Spain vs Cape Verde, Mercedes-Benz Stadium  (12 pm EDT = 16:00 UTC)
     {"id":"wc8","group":"H","home":"Spain","away":"Cape Verde",
      "home_code":"es","away_code":"cv",
-     "date":"2026-06-15","time":"12:00","venue":"Mercedes-Benz Stadium, Atlanta"},
-    # Group I — opener: France vs Senegal, MetLife Stadium
+     "date":"2026-06-15","time":"16:00","venue":"Mercedes-Benz Stadium, Atlanta"},
+    # Group I — France vs Senegal, MetLife Stadium  (3 pm EDT = 19:00 UTC)
     {"id":"wc9","group":"I","home":"France","away":"Senegal",
      "home_code":"fr","away_code":"sn",
-     "date":"2026-06-16","time":"15:00","venue":"MetLife Stadium, East Rutherford NJ"},
-    # Group J — opener: Argentina vs Algeria, Arrowhead Stadium
+     "date":"2026-06-16","time":"19:00","venue":"MetLife Stadium, East Rutherford NJ"},
+    # Group J — Argentina vs Algeria, Arrowhead Stadium  (9 pm EDT Jun 16 = 01:00 UTC Jun 17)
     {"id":"wc10","group":"J","home":"Argentina","away":"Algeria",
      "home_code":"ar","away_code":"dz",
-     "date":"2026-06-16","time":"21:00","venue":"Arrowhead Stadium, Kansas City"},
-    # Group K — opener: Portugal vs DR Congo, NRG Stadium
+     "date":"2026-06-17","time":"01:00","venue":"Arrowhead Stadium, Kansas City"},
+    # Group K — Portugal vs DR Congo, NRG Stadium  (1 pm EDT = 17:00 UTC)
     {"id":"wc11","group":"K","home":"Portugal","away":"DR Congo",
      "home_code":"pt","away_code":"cd",
-     "date":"2026-06-17","time":"13:00","venue":"NRG Stadium, Houston"},
-    # Group L — opener: England vs Croatia, AT&T Stadium
+     "date":"2026-06-17","time":"17:00","venue":"NRG Stadium, Houston"},
+    # Group L — England vs Croatia, AT&T Stadium  (4 pm EDT = 20:00 UTC)
     {"id":"wc12","group":"L","home":"England","away":"Croatia",
      "home_code":"gb-eng","away_code":"hr",
-     "date":"2026-06-17","time":"16:00","venue":"AT&T Stadium, Dallas"},
+     "date":"2026-06-17","time":"20:00","venue":"AT&T Stadium, Dallas"},
 ]
 
 def _build_wc_fixtures():
@@ -366,6 +367,7 @@ def _build_wc_fixtures():
 
         fixtures.append({
             **raw,
+            'utc_kickoff':  f"{raw['date']}T{raw['time']}:00Z",
             'result':       {'home': ph, 'draw': pd_, 'away': pa},
             'over_goals':   pg,
             'btts':         pred.get('btts',         _btts_prob(1.2, 1.2)),

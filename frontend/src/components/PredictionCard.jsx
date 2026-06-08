@@ -65,6 +65,41 @@ const flagUrl = name => {
 }
 
 
+// ── Local-timezone time helpers ───────────────────────────────────────────────
+
+const _userTZ = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone } catch { return undefined }
+}
+
+/** Format a UTC ISO string as HH:MM in the visitor's local timezone. */
+const localTime = utcIso => {
+  if (!utcIso) return null
+  try {
+    return new Date(utcIso).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', timeZone: _userTZ(),
+    })
+  } catch { return null }
+}
+
+/** Return "Live", "Today", "Tomorrow", or a short date — all in local time. */
+const localDateLabel = (utcIso, status) => {
+  if (status === 'IN_PLAY' || status === 'PAUSED') return 'Live'
+  if (!utcIso) return 'Today'
+  try {
+    const tz  = _userTZ()
+    const fmt = d => d.toLocaleDateString('en-CA', { timeZone: tz }) // YYYY-MM-DD
+    const matchDay    = fmt(new Date(utcIso))
+    const todayDay    = fmt(new Date())
+    const tomorrowDay = fmt(new Date(Date.now() + 864e5))
+    if (matchDay === todayDay)    return 'Today'
+    if (matchDay === tomorrowDay) return 'Tomorrow'
+    return new Date(utcIso).toLocaleDateString([], {
+      month: 'short', day: 'numeric', timeZone: tz,
+    })
+  } catch { return 'Today' }
+}
+
+
 // ── Team badge ────────────────────────────────────────────────────────────────
 
 function TeamBadge({ crest, name, isIntl }) {
@@ -211,9 +246,13 @@ export default function PredictionCard({ tip, isWC = false }) {
           }
         </div>
         <div className="card-time-row">
-          <span className="card-date-pill">{tip.date_label ?? tip.date}</span>
-          <span className="card-kickoff">{tip.time}</span>
-          {tip.utc_date && <KickoffCountdown utcDate={tip.utc_date} />}
+          <span className="card-date-pill">
+            {localDateLabel(tip.utc_kickoff, tip.status) ?? tip.date_label ?? tip.date}
+          </span>
+          <span className="card-kickoff">
+            {localTime(tip.utc_kickoff) ?? tip.time}
+          </span>
+          {tip.utc_kickoff && <KickoffCountdown utcDate={tip.utc_kickoff} />}
         </div>
       </div>
 

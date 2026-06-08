@@ -116,6 +116,11 @@ def _extract_time(match: dict) -> str:
             pass
     return "?"
 
+
+def _extract_utc_iso(match: dict) -> str:
+    """Return the raw UTC ISO-8601 string from a football-data.org match."""
+    return match.get("utcDate", "")
+
 # ── Fetch today's fixtures ────────────────────────────────────────────────────
 
 def _fetch_today() -> list:
@@ -435,13 +440,14 @@ def _fetch_intl_from_espn(today: str) -> list:
                 comp_name = (ev.get("competitions") or [{}])[0].get("type", {}).get("text", "") or "International Friendly"
 
                 result.append({
-                    "home":       home,
-                    "away":       away,
-                    "league":     comp_name,
-                    "time":       time_str,
-                    "home_crest": home_c.get("team", {}).get("logo", ""),
-                    "away_crest": away_c.get("team", {}).get("logo", ""),
-                    "status":     status,
+                    "home":         home,
+                    "away":         away,
+                    "league":       comp_name,
+                    "time":         time_str,
+                    "utc_kickoff":  raw_date if raw_date else "",
+                    "home_crest":   home_c.get("team", {}).get("logo", ""),
+                    "away_crest":   away_c.get("team", {}).get("logo", ""),
+                    "status":       status,
                 })
         except Exception:
             continue
@@ -478,9 +484,9 @@ def get_intl_tips(wc_predict_fn) -> list:
         comp_name  = match.get("competition", {}).get("name", "") or "International"
         status     = _get_match_status(match)
         time_str   = _extract_time(match)
+        utc_iso    = _extract_utc_iso(match)
         home_crest = _extract_logo(match, "home")
         away_crest = _extract_logo(match, "away")
-        date_label = "Live" if status in _LIVE_STATUSES else "Today"
 
         try:
             pred = wc_predict_fn(home_name, away_name, is_neutral=True)
@@ -512,7 +518,7 @@ def get_intl_tips(wc_predict_fn) -> list:
             "away_crest":       away_crest,
             "is_international": True,
             "time":             time_str,
-            "date_label":       date_label,
+            "utc_kickoff":      utc_iso,
             "status":           status,
             "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
             "over_goals":       round(pg, 4),
@@ -562,7 +568,7 @@ def get_intl_tips(wc_predict_fn) -> list:
             "away_crest":       ev["away_crest"],
             "is_international": True,
             "time":             ev["time"],
-            "date_label":       date_label,
+            "utc_kickoff":      ev.get("utc_kickoff", ""),
             "status":           status,
             "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
             "over_goals":       round(pg, 4),
@@ -603,10 +609,10 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
         league_raw = _extract_league(match)
         status     = _get_match_status(match)
         time_str   = _extract_time(match)
+        utc_iso    = _extract_utc_iso(match)
         home_logo  = _extract_logo(match, "home")
         away_logo  = _extract_logo(match, "away")
         comp_label = match.get("competition", {}).get("name", "") or league_raw.title()
-        date_label = "Live" if status in _LIVE_STATUSES else "Today"
 
         is_intl = (comp_code in _INTL_COMP_CODES
                    or any(kw in league_raw for kw in _INTL_KEYWORDS))
@@ -656,7 +662,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
                 "away_crest":       away_logo,
                 "is_international": True,
                 "time":             time_str,
-                "date_label":       date_label,
+                "utc_kickoff":      utc_iso,
                 "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
                 "over_goals":       round(pg, 4),
                 "btts":             (pred or {}).get("btts",         _btts_prob(1.2, 1.2)),
@@ -685,7 +691,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
                 "away_crest":       away_logo,
                 "is_international": False,
                 "time":             time_str,
-                "date_label":       date_label,
+                "utc_kickoff":      utc_iso,
                 "result":           scored["result"],
                 "over_goals":       scored["over_goals"],
                 "btts":             scored.get("btts", _btts_prob(1.2, 1.2)),
@@ -731,7 +737,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
             "away_crest":       ev["away_crest"],
             "is_international": True,
             "time":             ev["time"],
-            "date_label":       date_label,
+            "utc_kickoff":      ev.get("utc_kickoff", ""),
             "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
             "over_goals":       round(pg, 4),
             "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),

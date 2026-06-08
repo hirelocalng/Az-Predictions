@@ -574,17 +574,27 @@ def get_intl_tips(wc_predict_fn) -> list:
     return tips
 
 
-# ── Daily tips (all competitions, top-5 by confidence ≥ 55%) ─────────────────
+# ── Daily tips (all competitions + ESPN friendlies, top-5 by confidence) ──────
 
 def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
     """
-    Fetch today's matches from football-data.org, score every match through
-    the appropriate model, filter to ≥55% confidence, return the top 5.
-    """
-    matches = _fetch_today()
-    results = []
+    Fetch today's matches, score every match, return the top 5 by confidence.
 
-    for idx, match in enumerate(matches):
+    Sources (merged, deduplicated):
+      1. football-data.org  — club leagues, WCQ, Nations League, etc.
+      2. ESPN free API      — international friendlies missing from fd.org
+    """
+    today   = datetime.now().strftime("%Y-%m-%d")
+    results = []
+    seen    = set()   # _norm_pair keys to avoid duplicates across sources
+
+    # ── Source 1: football-data.org ───────────────────────────────────────────
+    try:
+        fd_matches = _fetch_today()
+    except Exception:
+        fd_matches = []
+
+    for idx, match in enumerate(fd_matches):
         home_name, away_name = _extract_teams(match)
         if not home_name or not away_name:
             continue
@@ -612,13 +622,12 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
             if pred:
                 ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
                 pg           = pred["over_goals"]
-                display_home = pred["resolved_home"]
-                display_away = pred["resolved_away"]
+                display_home = pred.get("resolved_home", home_name)
+                display_away = pred.get("resolved_away", away_name)
                 bet_lbl, bet_conf, overall = _best_bet(
                     display_home, display_away, ph, pd_, pa, pg
                 )
             else:
-                # Fall back to club models with default stats
                 hs  = dict(_DEFAULT_STATS)
                 as_ = dict(_DEFAULT_STATS)
                 form5_h = round((hs["win"] * 3 + hs["draw"]) * 5)
@@ -637,6 +646,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
             if overall < _MIN_CONF:
                 continue
 
+            seen.add(_norm_pair(home_name, away_name))
             results.append({
                 "id":               f"dt{idx+1}",
                 "league":           comp_label,
@@ -665,6 +675,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
             if overall < _MIN_CONF:
                 continue
 
+            seen.add(_norm_pair(home_name, away_name))
             results.append({
                 "id":               f"dt{idx+1}",
                 "league":           comp_label,
@@ -682,6 +693,52 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
                 "best_bet":         scored["best_bet"],
                 "_conf":            overall,
             })
+
+    # ── Source 2: ESPN international friendlies ───────────────────────────────
+    espn_matches = _fetch_intl_from_espn(today)
+    base_idx     = len(results)
+
+    for jdx, ev in enumerate(espn_matches):
+        pair = _norm_pair(ev["home"], ev["away"])
+        if pair in seen:
+            continue
+
+        try:
+            pred = wc_predict_fn(ev["home"], ev["away"], is_neutral=True)
+        except Exception:
+            continue
+        if not pred:
+            continue
+
+        ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
+        pg           = pred["over_goals"]
+        display_home = pred.get("resolved_home", ev["home"])
+        display_away = pred.get("resolved_away", ev["away"])
+        status       = ev.get("status", "TIMED")
+        date_label   = "Live" if status in _LIVE_STATUSES else "Today"
+        bet_lbl, bet_conf, overall = _best_bet(display_home, display_away, ph, pd_, pa, pg)
+
+        if overall < _MIN_CONF:
+            continue
+
+        seen.add(pair)
+        results.append({
+            "id":               f"dt{base_idx + jdx + 1}",
+            "league":           ev["league"],
+            "home_team":        display_home,
+            "away_team":        display_away,
+            "home_crest":       ev["home_crest"],
+            "away_crest":       ev["away_crest"],
+            "is_international": True,
+            "time":             ev["time"],
+            "date_label":       date_label,
+            "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
+            "over_goals":       round(pg, 4),
+            "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),
+            "over_corners":     pred.get("over_corners", 0.52),
+            "best_bet":         {"label": bet_lbl, "confidence": bet_conf},
+            "_conf":            overall,
+        })
 
     results.sort(key=lambda x: x["_conf"], reverse=True)
     out = results[:_MAX_TIPS]

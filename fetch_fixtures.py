@@ -22,16 +22,20 @@ warnings.filterwarnings("ignore")
 _FD_URL     = "https://api.football-data.org/v4/matches"
 _FD_HEADERS = {"X-Auth-Token": "118333be3eb84d0ca4e10740f6d62255"}
 
-# TheSportsDB free API — fallback for international friendlies not covered by
-# the football-data.org free tier
-_TSDB_URL = "https://www.thesportsdb.com/api/v1/json/3/eventsday.php"
+# ESPN unofficial scoreboard API — fallback for international friendlies not
+# covered by the football-data.org free tier. No API key required.
+_ESPN_SCOREBOARD = (
+    "https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard"
+)
+# ESPN league slugs to query for international matches
+_ESPN_INTL_LEAGUES = ["fifa.friendly", "uefa.friendly"]
 
-_INTL_LEAGUE_KWS = frozenset({
-    "international", "friendly", "friendl", "national team",
-    "nations league", "world cup", "euro ", "copa america",
-    "africa cup", "asian cup", "concacaf", "qualification", "qualifier",
-    "warm-up", "warmup",
-})
+_ESPN_STATUS_MAP = {
+    "STATUS_SCHEDULED":   "TIMED",
+    "STATUS_IN_PROGRESS": "IN_PLAY",
+    "STATUS_HALFTIME":    "PAUSED",
+    "STATUS_FINAL":       "FINISHED",
+}
 
 _MIN_CONF = 0.55
 _MAX_TIPS = 5
@@ -380,46 +384,69 @@ def _norm_pair(a: str, b: str) -> frozenset:
     return frozenset({a.lower().strip(), b.lower().strip()})
 
 
-def _fetch_intl_from_tsdb(today: str) -> list:
+def _fetch_intl_from_espn(today: str) -> list:
     """
-    Fetch today's international soccer matches from TheSportsDB free API.
+    Fetch today's international fixtures from ESPN's free scoreboard API.
+    Queries multiple league slugs (fifa.friendly, uefa.friendly) and merges.
     Returns a list of dicts with keys: home, away, league, time,
-    home_crest, away_crest.
+    home_crest, away_crest, status.
     """
-    try:
-        r = requests.get(_TSDB_URL, params={"d": today, "s": "Soccer"}, timeout=10)
-        if r.status_code != 200:
-            return []
-        events = r.json().get("events") or []
-        result = []
-        for ev in events:
-            league = (ev.get("strLeague") or "").strip()
-            if not any(kw in league.lower() for kw in _INTL_LEAGUE_KWS):
+    date_str = today.replace("-", "")   # YYYYMMDD
+    result   = []
+    seen     = set()
+
+    for slug in _ESPN_INTL_LEAGUES:
+        try:
+            url = _ESPN_SCOREBOARD.format(league=slug)
+            r   = requests.get(url, params={"dates": date_str}, timeout=10)
+            if r.status_code != 200:
                 continue
-            home = (ev.get("strHomeTeam") or "").strip()
-            away = (ev.get("strAwayTeam") or "").strip()
-            if not home or not away:
-                continue
-            ts = ev.get("strTimestamp") or ev.get("strTime") or ""
-            try:
-                time_str = (
-                    datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%H:%M")
-                    if "T" in ts
-                    else ts[:5] or "?"
-                )
-            except Exception:
-                time_str = "?"
-            result.append({
-                "home":       home,
-                "away":       away,
-                "league":     league or "International Friendly",
-                "time":       time_str,
-                "home_crest": ev.get("strHomeTeamBadge") or "",
-                "away_crest": ev.get("strAwayTeamBadge") or "",
-            })
-        return result
-    except Exception:
-        return []
+            events = r.json().get("events") or []
+            for ev in events:
+                competitors = (ev.get("competitions") or [{}])[0].get("competitors", [])
+                home_c = next((c for c in competitors if c.get("homeAway") == "home"), None)
+                away_c = next((c for c in competitors if c.get("homeAway") == "away"), None)
+                if not home_c or not away_c:
+                    continue
+                home = (home_c.get("team", {}).get("displayName") or "").strip()
+                away = (away_c.get("team", {}).get("displayName") or "").strip()
+                if not home or not away:
+                    continue
+                pair = _norm_pair(home, away)
+                if pair in seen:
+                    continue
+                seen.add(pair)
+
+                # Parse UTC kickoff time
+                raw_date = ev.get("date", "")
+                try:
+                    time_str = (
+                        datetime.fromisoformat(raw_date.replace("Z", "+00:00"))
+                        .strftime("%H:%M")
+                    )
+                except Exception:
+                    time_str = "?"
+
+                esp_status = (ev.get("status") or {}).get("type", {}).get("name", "")
+                status = _ESPN_STATUS_MAP.get(esp_status, "TIMED")
+
+                league_name = ev.get("name", "").split(" at ")[0] if " at " in ev.get("name","") else "International Friendly"
+                # Use competition display name if available
+                comp_name = (ev.get("competitions") or [{}])[0].get("type", {}).get("text", "") or "International Friendly"
+
+                result.append({
+                    "home":       home,
+                    "away":       away,
+                    "league":     comp_name,
+                    "time":       time_str,
+                    "home_crest": home_c.get("team", {}).get("logo", ""),
+                    "away_crest": away_c.get("team", {}).get("logo", ""),
+                    "status":     status,
+                })
+        except Exception:
+            continue
+
+    return result
 
 
 # ── All today's matches via worldcup model (no filter, no confidence floor) ───
@@ -494,11 +521,11 @@ def get_intl_tips(wc_predict_fn) -> list:
             "best_bet":         bet,
         })
 
-    # ── Secondary: TheSportsDB (international friendlies) ────────────────────
-    tsdb_matches = _fetch_intl_from_tsdb(today)
+    # ── Secondary: ESPN (international friendlies & more) ────────────────────
+    espn_matches = _fetch_intl_from_espn(today)
     base_idx     = len(tips)
 
-    for jdx, ev in enumerate(tsdb_matches):
+    for jdx, ev in enumerate(espn_matches):
         pair = _norm_pair(ev["home"], ev["away"])
         if pair in seen:
             continue  # already covered by football-data.org
@@ -514,6 +541,8 @@ def get_intl_tips(wc_predict_fn) -> list:
         pg           = pred["over_goals"]
         display_home = pred.get("resolved_home", ev["home"])
         display_away = pred.get("resolved_away", ev["away"])
+        status       = ev.get("status", "TIMED")
+        date_label   = "Live" if status in _LIVE_STATUSES else "Today"
 
         best_prob = max(ph, pd_, pa)
         if best_prob == ph:
@@ -533,8 +562,8 @@ def get_intl_tips(wc_predict_fn) -> list:
             "away_crest":       ev["away_crest"],
             "is_international": True,
             "time":             ev["time"],
-            "date_label":       "Today",
-            "status":           "TIMED",
+            "date_label":       date_label,
+            "status":           status,
             "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
             "over_goals":       round(pg, 4),
             "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),

@@ -44,3 +44,13 @@ Press CTRL+C to quit
 127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/countdown HTTP/1.1" 200 -
 127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/worldcup/fixtures HTTP/1.1" 200 -
 127.0.0.1 - - [07/Jun/2026 12:57:58] "GET /api/club/tips HTTP/1.1" 200 -
+ * Detected change in 'C:\\Users\\HP ZBook 14\\Az Predictions\\app.py', reloading
+ * Restarting with stat
+127.0.0.1 - - [07/Jun/2026 19:17:19] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 19:17:19] "GET /assets/index-nLlGdXvv.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 19:17:19] "GET /assets/index-Bew_8-bY.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 19:17:19] "GET /api/intl/fixtures HTTP/1.1" 404 -
+127.0.0.1 - - [07/Jun/2026 19:17:19] "GET /api/countdown HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 19:17:19] "GET /api/worldcup/fixtures HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 19:17:23] "GET /api/club/tips HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jun/2026 19:17:23] "GET /api/daily-tips HTTP/1.1" 200 -

@@ -3,6 +3,7 @@ import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
+import ResultsSection from './components/ResultsSection.jsx'
 
 const LogoIcon = () => (
   <svg viewBox="0 0 24 16" fill="none">
@@ -40,7 +41,7 @@ function Header({ active, setActive }) {
       </div>
 
       <nav className="header-nav">
-        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['intl','Live Internationals'],['club','Club Tips']].map(([id, label]) => (
+        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['intl','Live Internationals'],['club','Club Tips'],['results','Results']].map(([id, label]) => (
           <button
             key={id}
             className={`nav-btn${active === id ? ' active' : ''}`}
@@ -122,6 +123,8 @@ export default function App() {
         <IntlSection />
         <div className="divider" />
         <ClubSection />
+        <div className="divider" />
+        <ResultsSection />
       </main>
 
       <footer className="footer">

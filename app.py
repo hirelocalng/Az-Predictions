@@ -17,7 +17,7 @@ Run:
 
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
-import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata
+import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -47,6 +47,84 @@ club_corners = _load(os.path.join(_BASE_DIR, 'corners_model.pkl'))
 
 LEAGUE_MAP  = club_result['league_map']  if club_result  else {}
 RES_ENCODER = club_result['result_encoder'] if club_result else None
+
+# ── Prediction history ────────────────────────────────────────────────────────
+
+_HISTORY_PATH = os.path.join(_BASE_DIR, 'prediction_history.json')
+_HISTORY_LOCK = threading.Lock()
+
+
+def _read_raw_history():
+    try:
+        with open(_HISTORY_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {'predictions': []}
+    except Exception:
+        return {'predictions': []}
+
+
+def _write_raw_history(data):
+    try:
+        with open(_HISTORY_PATH, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        _log.error('Failed to write history: %s', e)
+
+
+def _match_key(home, away, date):
+    return f"{date}/{home.lower().strip()}/{away.lower().strip()}"
+
+
+def _save_prediction(tip):
+    home = (tip.get('home_team') or tip.get('home') or '').strip()
+    away = (tip.get('away_team') or tip.get('away') or '').strip()
+    kickoff = (tip.get('utc_kickoff') or '').strip()
+    match_date = kickoff[:10] if kickoff else (tip.get('date') or '')
+    if not home or not away or not match_date:
+        return
+    best_bet = tip.get('best_bet') or {}
+    over_goals = tip.get('over_goals', 0.5)
+    btts       = tip.get('btts', 0.48)
+    corners    = tip.get('over_corners', 0.52)
+    entry = {
+        'match_id':          _match_key(home, away, match_date),
+        'home_team':         home,
+        'away_team':         away,
+        'match_date':        match_date,
+        'match_time':        tip.get('time', kickoff[11:16] if len(kickoff) > 15 else ''),
+        'competition':       (tip.get('league') or tip.get('competition') or 'Football'),
+        'predicted_winner':  best_bet.get('label', ''),
+        'predicted_goals':   'Over 2.5' if over_goals >= 0.5 else 'Under 2.5',
+        'predicted_btts':    'Yes' if btts >= 0.5 else 'No',
+        'predicted_corners': 'Over 9.5' if corners >= 0.5 else 'Under 9.5',
+        'actual_home_score': None,
+        'actual_away_score': None,
+        'result_status':     'PENDING',
+        'kickoff_utc':       kickoff,
+        'saved_at':          datetime.now(timezone.utc).isoformat(),
+    }
+    with _HISTORY_LOCK:
+        data = _read_raw_history()
+        existing = {p['match_id'] for p in data['predictions']}
+        if entry['match_id'] not in existing:
+            data['predictions'].append(entry)
+            _write_raw_history(data)
+
+
+def _get_history():
+    with _HISTORY_LOCK:
+        return _read_raw_history()
+
+
+def _completed_keys():
+    data = _get_history()
+    return {
+        p['match_id']
+        for p in data.get('predictions', [])
+        if p['result_status'] in ('WON', 'LOST')
+    }
+
 
 # ── International prediction — copied verbatim from worldcup_predict.py ───────
 # Every constant, every helper, every formula is identical to the terminal tool.
@@ -441,6 +519,91 @@ def _wc_predict(home, away, is_neutral=True):
         _log.warning('predict_match failed %s vs %s — %s', home, away, exc)
         return None
 
+
+# ── TheSportsDB result lookup ─────────────────────────────────────────────────
+
+_TSDB_URL = 'https://www.thesportsdb.com/api/v1/json/3/eventsday.php'
+
+
+def _team_similar(a, b):
+    a, b = a.lower().strip(), b.lower().strip()
+    if a == b or a in b or b in a:
+        return True
+    return difflib.SequenceMatcher(None, a, b).ratio() > 0.72
+
+
+def _fetch_tsdb_result(home_team, away_team, match_date):
+    """Return (home_score, away_score) from TheSportsDB or None if not found."""
+    import requests as _req
+    try:
+        r = _req.get(_TSDB_URL, params={'d': match_date, 's': 'Soccer'}, timeout=10)
+        if r.status_code != 200:
+            return None
+        events = r.json().get('events') or []
+        for ev in events:
+            status = (ev.get('strStatus') or '').lower()
+            if 'finish' not in status and 'final' not in status:
+                continue
+            hs = ev.get('intHomeScore')
+            as_ = ev.get('intAwayScore')
+            if hs is None or as_ is None:
+                continue
+            eh = ev.get('strHomeTeam', '')
+            ea = ev.get('strAwayTeam', '')
+            if _team_similar(eh, home_team) and _team_similar(ea, away_team):
+                return int(hs), int(as_)
+            if _team_similar(eh, away_team) and _team_similar(ea, home_team):
+                return int(as_), int(hs)
+    except Exception as exc:
+        _log.warning('TSDB lookup failed: %s', exc)
+    return None
+
+
+def _check_pending_results():
+    """APScheduler job: fetch final scores for PENDING predictions past kickoff."""
+    _log.info('APScheduler: checking pending predictions…')
+    now = datetime.now(timezone.utc)
+    with _HISTORY_LOCK:
+        data = _read_raw_history()
+        changed = False
+        for pred in data['predictions']:
+            if pred['result_status'] != 'PENDING':
+                continue
+            kickoff_str = pred.get('kickoff_utc', '')
+            match_date  = pred.get('match_date', '')
+            try:
+                if kickoff_str:
+                    kickoff = datetime.fromisoformat(kickoff_str.replace('Z', '+00:00'))
+                elif match_date:
+                    kickoff = datetime.fromisoformat(f'{match_date}T23:00:00+00:00')
+                else:
+                    continue
+            except Exception:
+                continue
+            if kickoff + timedelta(hours=2) > now:
+                continue
+            result = _fetch_tsdb_result(pred['home_team'], pred['away_team'], match_date)
+            if result is None:
+                continue
+            hs, as_ = result
+            pred['actual_home_score'] = hs
+            pred['actual_away_score'] = as_
+            pw     = pred.get('predicted_winner', '').lower()
+            home_l = pred['home_team'].lower()
+            away_l = pred['away_team'].lower()
+            if hs > as_:
+                won = home_l in pw
+            elif as_ > hs:
+                won = away_l in pw
+            else:
+                won = 'draw' in pw
+            pred['result_status'] = 'WON' if won else 'LOST'
+            changed = True
+            _log.info('Result resolved: %s %d-%d %s → %s',
+                      pred['home_team'], hs, as_, pred['away_team'], pred['result_status'])
+        if changed:
+            _write_raw_history(data)
+
 WC_FIXTURES_RAW = [
     # All times UTC.  EDT = UTC-4 in June.  Midnight-crossover dates adjusted.
     # Sources: ESPN + NBC Sports official schedule (verified Jun 2026).
@@ -705,7 +868,7 @@ def _build_wc_fixtures():
         else:
             bet = {'label': 'Draw', 'confidence': pd_}
 
-        fixtures.append({
+        entry = {
             **raw,
             'utc_kickoff':  f"{raw['date']}T{raw['time']}:00Z",
             'result':       {'home': ph, 'draw': pd_, 'away': pa},
@@ -713,7 +876,10 @@ def _build_wc_fixtures():
             'btts':         pred.get('btts',         0.48),
             'over_corners': pred.get('over_corners', 0.52),
             'best_bet':     bet,
-        })
+            'competition':  'FIFA World Cup 2026',
+        }
+        _save_prediction(entry)
+        fixtures.append(entry)
     return fixtures
 
 
@@ -734,20 +900,30 @@ def club_tips():
     if _CLUB_TIPS_CACHE["data"] is None or (now_ts - _CLUB_TIPS_CACHE["ts"]) > _CACHE_TTL:
         try:
             tips = get_club_tips(_club_predict)
+            for t in tips:
+                _save_prediction(t)
             _CLUB_TIPS_CACHE["data"] = tips
             _CLUB_TIPS_CACHE["ts"]   = now_ts
         except Exception as exc:
             app.logger.error("club-tips fetch failed: %s", exc)
             if _CLUB_TIPS_CACHE["data"] is None:
                 _CLUB_TIPS_CACHE["data"] = []
-    return jsonify(_CLUB_TIPS_CACHE["data"])
+    done = _completed_keys()
+    active = [t for t in (_CLUB_TIPS_CACHE["data"] or [])
+              if _match_key(t.get('home_team',''), t.get('away_team',''),
+                            (t.get('utc_kickoff','') or '')[:10]) not in done]
+    return jsonify(active)
 
 
 @app.route('/api/worldcup/fixtures')
 def wc_fixtures():
-    now = datetime.now(timezone.utc)
+    now  = datetime.now(timezone.utc)
+    done = _completed_keys()
     upcoming = []
     for f in _WC_FIXTURES:
+        mk = _match_key(f['home'], f['away'], f['date'])
+        if mk in done:
+            continue
         try:
             kickoff = datetime.fromisoformat(
                 f['date'] + 'T' + f['time'] + ':00'
@@ -847,13 +1023,19 @@ def intl_fixtures():
     if _INTL_TIPS_CACHE["data"] is None or (now - _INTL_TIPS_CACHE["ts"]) > _CACHE_TTL:
         try:
             tips = get_intl_tips(_wc_predict)
+            for t in tips:
+                _save_prediction(t)
             _INTL_TIPS_CACHE["data"] = tips
             _INTL_TIPS_CACHE["ts"]   = now
         except Exception as exc:
             app.logger.error("intl-fixtures fetch failed: %s", exc)
             if _INTL_TIPS_CACHE["data"] is None:
                 _INTL_TIPS_CACHE["data"] = []
-    return jsonify(_INTL_TIPS_CACHE["data"])
+    done = _completed_keys()
+    active = [t for t in (_INTL_TIPS_CACHE["data"] or [])
+              if _match_key(t.get('home_team',''), t.get('away_team',''),
+                            (t.get('utc_kickoff','') or '')[:10]) not in done]
+    return jsonify(active)
 
 
 @app.route("/api/daily-tips")
@@ -862,12 +1044,56 @@ def daily_tips():
     if _DAILY_TIPS_CACHE["data"] is None or (now - _DAILY_TIPS_CACHE["ts"]) > _CACHE_TTL:
         try:
             tips = get_daily_tips(_club_predict, _wc_predict)
+            for t in tips:
+                _save_prediction(t)
             _DAILY_TIPS_CACHE["data"] = tips
             _DAILY_TIPS_CACHE["ts"]   = now
         except Exception as exc:
             app.logger.error("daily-tips fetch failed: %s", exc)
             return jsonify([])
-    return jsonify(_DAILY_TIPS_CACHE["data"])
+    done = _completed_keys()
+    active = [t for t in (_DAILY_TIPS_CACHE["data"] or [])
+              if _match_key(t.get('home_team','') or t.get('home',''),
+                            t.get('away_team','') or t.get('away',''),
+                            (t.get('utc_kickoff','') or '')[:10]) not in done]
+    return jsonify(active)
+
+
+@app.route('/api/results')
+def results_history():
+    """Return completed prediction history with stats."""
+    data  = _get_history()
+    preds = data.get('predictions', [])
+    completed = sorted(
+        [p for p in preds if p['result_status'] in ('WON', 'LOST')],
+        key=lambda p: p.get('match_date', ''), reverse=True
+    )
+    won  = sum(1 for p in completed if p['result_status'] == 'WON')
+    lost = len(completed) - won
+    win_rate = round(won / len(completed) * 100, 1) if completed else 0.0
+
+    streak = 0
+    streak_type = None
+    for p in completed:
+        if streak_type is None:
+            streak_type = p['result_status']
+            streak = 1
+        elif p['result_status'] == streak_type:
+            streak += 1
+        else:
+            break
+
+    return jsonify({
+        'stats': {
+            'total':       len(completed),
+            'won':         won,
+            'lost':        lost,
+            'win_rate':    win_rate,
+            'streak':      streak,
+            'streak_type': streak_type,
+        },
+        'predictions': completed,
+    })
 
 
 # ── Serve React build ─────────────────────────────────────────────────────────
@@ -891,6 +1117,20 @@ def serve(path):
     if os.path.isfile(file_path):
         return send_from_directory(DIST, path)
     return send_from_directory(DIST, 'index.html')
+
+
+# ── APScheduler — result checker every 30 minutes ────────────────────────────
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler as _BgSched
+    _scheduler = _BgSched(daemon=True)
+    _scheduler.add_job(_check_pending_results, 'interval', minutes=30,
+                       id='result_checker', misfire_grace_time=120)
+    _scheduler.start()
+    import atexit as _atexit
+    _atexit.register(lambda: _scheduler.shutdown(wait=False))
+    _log.info('APScheduler started — checking results every 30 min')
+except Exception as _sch_err:
+    _log.warning('APScheduler not available: %s', _sch_err)
 
 
 if __name__ == '__main__':

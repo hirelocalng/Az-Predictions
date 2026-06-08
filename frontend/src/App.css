@@ -898,6 +898,159 @@ body::after {
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.09); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(0,194,122,0.25); }
 
+/* ── Results / Prediction History ──────────────────────────────────────────── */
+
+.res-stats-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 44px;
+}
+
+.res-stat-card {
+  flex: 1;
+  min-width: 120px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 20px 24px;
+  text-align: center;
+}
+
+.res-stat-num {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.res-stat-num.green { color: var(--green); }
+.res-stat-num.amber { color: var(--amber); }
+.res-stat-num.red   { color: var(--red);   }
+
+.res-stat-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  margin-top: 5px;
+}
+
+.res-stat-sub {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* List of result rows */
+.res-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.res-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 1fr 1fr 80px 70px;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 14px 20px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.res-row:hover { background: var(--bg-card-hover); }
+
+.res-row-won  { border-left: 3px solid var(--green); }
+.res-row-lost { border-left: 3px solid var(--red); }
+
+.res-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 3px 9px;
+  border-radius: 4px;
+}
+.res-badge.won  { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
+.res-badge.lost { background: var(--red-dim);   color: var(--red);   border: 1px solid rgba(224,82,82,0.22); }
+
+.res-row-teams {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+}
+.res-home, .res-away { font-weight: 600; color: var(--text); }
+.res-vs { color: var(--text-subtle); font-size: 0.72rem; }
+
+.res-row-comp {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.res-row-pred,
+.res-row-score {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.res-pred-label,
+.res-score-label {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+}
+
+.res-pred-val {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.res-score-val {
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.res-row-date {
+  font-size: 0.72rem;
+  color: var(--text-subtle);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Skeleton loading */
+.res-skeleton { display: flex; flex-direction: column; gap: 8px; margin-bottom: 32px; }
+
+.res-row-skel {
+  height: 56px;
+  border-radius: var(--r);
+  background: var(--bg-card);
+}
+
+/* Empty state */
+.res-empty {
+  text-align: center;
+  padding: 64px 24px;
+  color: var(--text-muted);
+}
+.res-empty-icon { font-size: 2.4rem; margin-bottom: 16px; }
+.res-empty-sub  { font-size: 0.82rem; color: var(--text-subtle); margin-top: 8px; }
+
 /* ── Responsive ────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .header { padding: 0 16px; }
@@ -908,4 +1061,11 @@ body::after {
   .countdown-card { padding: 24px 20px; }
   .timer-num { font-size: 2rem; }
   .timer-unit { min-width: 54px; }
+  .res-row {
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto auto;
+  }
+  .res-row-teams { grid-column: 1 / -1; }
+  .res-stats-row { gap: 10px; }
+  .res-stat-card { min-width: 90px; padding: 14px 12px; }
 }

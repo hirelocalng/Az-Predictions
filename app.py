@@ -40,9 +40,10 @@ def _load(p):
     except Exception:
         return None
 
-club_result  = _load('result_model.pkl')
-club_goals   = _load('goals_model.pkl')
-club_corners = _load('corners_model.pkl')
+_BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+club_result  = _load(os.path.join(_BASE_DIR, 'result_model.pkl'))
+club_goals   = _load(os.path.join(_BASE_DIR, 'goals_model.pkl'))
+club_corners = _load(os.path.join(_BASE_DIR, 'corners_model.pkl'))
 
 LEAGUE_MAP  = club_result['league_map']  if club_result  else {}
 RES_ENCODER = club_result['result_encoder'] if club_result else None
@@ -50,9 +51,9 @@ RES_ENCODER = club_result['result_encoder'] if club_result else None
 # ── International prediction — copied verbatim from worldcup_predict.py ───────
 # Every constant, every helper, every formula is identical to the terminal tool.
 
-_WC_DATA_PATH         = 'data/results.csv'
-_WC_RESULT_MODEL_PATH = 'worldcup_result_model.pkl'
-_WC_GOALS_MODEL_PATH  = 'worldcup_goals_model.pkl'
+_WC_DATA_PATH         = os.path.join(_BASE_DIR, 'data', 'results.csv')
+_WC_RESULT_MODEL_PATH = os.path.join(_BASE_DIR, 'worldcup_result_model.pkl')
+_WC_GOALS_MODEL_PATH  = os.path.join(_BASE_DIR, 'worldcup_goals_model.pkl')
 _WC_FORM_WINDOW       = 10
 
 _TOURNAMENT_IMPORTANCE = {
@@ -804,6 +805,34 @@ def debug_predict():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/health')
+def health():
+    """Deployment health check — confirms which code + models are running."""
+    try:
+        r = predict_match('Peru', 'Spain')
+        return jsonify({
+            'status':      'ok',
+            'base_dir':    _BASE_DIR,
+            'wc_data':     _WC_DATA_PATH,
+            'peru_spain': {
+                'peru_win':   f"{r['home_win']*100:.1f}%",
+                'draw':       f"{r['draw']*100:.1f}%",
+                'spain_win':  f"{r['away_win']*100:.1f}%",
+                'over_goals': f"{r['over_goals']*100:.1f}%",
+                'btts':       f"{r['btts']*100:.1f}%",
+            },
+            'expected': {
+                'peru_win':   '5.0%',
+                'draw':       '18.1%',
+                'spain_win':  '76.9%',
+                'over_goals': '35.9%',
+                'btts':       '47.0%',
+            },
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'detail': str(e)}), 500
 
 
 # ── Daily tips (live fixtures + predictions) ──────────────────────────────────

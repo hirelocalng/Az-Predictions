@@ -7,6 +7,7 @@ Usage:
 """
 
 import sys
+import math
 import difflib
 import pickle
 import warnings
@@ -467,6 +468,93 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     btts = 'Yes' if both_teams else 'No'
     print(f'  Both Teams Score (estimate) -> {btts}')
     print(f'{sep}\n')
+
+
+# --- API (used by app.py — identical calculation, returns dict) ---------------
+
+_PRED_MODELS = None   # (result_model, res_features, goals_model, goals_features)
+_PRED_DF     = None   # loaded DataFrame
+_ALL_TEAMS   = None   # sorted team list derived from _PRED_DF
+
+
+def _api_btts_prob(home_gs: float, away_gs: float) -> float:
+    p_h = 1.0 - math.exp(-max(0.05, home_gs))
+    p_a = 1.0 - math.exp(-max(0.05, away_gs))
+    return round(p_h * p_a, 4)
+
+
+def _api_corners_prob(home_gs: float, away_gs: float,
+                      home_gc: float, away_gc: float) -> float:
+    avg = 1.2
+    exp_c = (9.2
+             + (home_gs - avg) * 1.1 + (away_gs - avg) * 1.1
+             + (home_gc - avg) * 0.35 + (away_gc - avg) * 0.35)
+    z = (exp_c - 9.5) / (2.2 * math.sqrt(2))
+    p = round(0.5 * (1.0 + math.erf(z)), 4)
+    return max(0.20, min(0.82, p))
+
+
+def predict_match(home_raw, away_raw, is_neutral=True,
+                  tournament='FIFA World Cup'):
+    """
+    Programmatic version of predict() — identical feature engineering, same
+    model calls, same probabilities. Returns a dict instead of printing.
+
+    Models and data are loaded once and cached globally for API throughput.
+
+    Returns
+    -------
+    dict  {home_win, draw, away_win, over_goals, btts, over_corners,
+           resolved_home, resolved_away}
+
+    Raises
+    ------
+    ValueError  if either team name cannot be resolved from the dataset.
+    """
+    global _PRED_MODELS, _PRED_DF, _ALL_TEAMS
+    if _PRED_MODELS is None:
+        _PRED_MODELS = load_models()
+    if _PRED_DF is None:
+        _PRED_DF   = load_data()
+        _ALL_TEAMS = sorted(set(
+            _PRED_DF['home_team'].tolist() + _PRED_DF['away_team'].tolist()
+        ))
+
+    result_model, res_features, goals_model, _ = _PRED_MODELS
+    df        = _PRED_DF
+    all_teams = _ALL_TEAMS
+
+    team_a = resolve_team(home_raw, all_teams)
+    team_b = resolve_team(away_raw, all_teams)
+
+    importance = get_importance(tournament)
+
+    home_form = get_team_form(df, team_a)
+    away_form = get_team_form(df, team_b)
+    h2h       = get_h2h(df, team_a, team_b)
+
+    home_form.update(get_major_form(df, team_a))
+    away_form.update(get_major_form(df, team_b))
+
+    X = build_feature_vector(home_form, away_form, h2h, res_features,
+                             is_neutral=is_neutral,
+                             tournament_importance=importance)
+
+    res_proba   = result_model.predict_proba(X)[0]   # [away_win, draw, home_win]
+    goals_proba = goals_model.predict_proba(X)[0]    # [under, over]
+
+    return {
+        'home_win':      round(float(res_proba[2]), 4),
+        'draw':          round(float(res_proba[1]), 4),
+        'away_win':      round(float(res_proba[0]), 4),
+        'over_goals':    round(float(goals_proba[1]), 4),
+        'btts':          _api_btts_prob(home_form['goals_scored'], away_form['goals_scored']),
+        'over_corners':  _api_corners_prob(
+                             home_form['goals_scored'], away_form['goals_scored'],
+                             home_form['goals_conceded'], away_form['goals_conceded']),
+        'resolved_home': team_a,
+        'resolved_away': team_b,
+    }
 
 
 def main():

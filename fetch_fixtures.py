@@ -502,11 +502,11 @@ def get_intl_tips(wc_predict_fn) -> list:
 
         best_prob = max(ph, pd_, pa)
         if best_prob == ph:
-            bet = {"label": f"{display_home} to Win", "confidence": round(ph, 4)}
+            bet = {"label": f"{display_home} to Win", "confidence": ph}
         elif best_prob == pa:
-            bet = {"label": f"{display_away} to Win", "confidence": round(pa, 4)}
+            bet = {"label": f"{display_away} to Win", "confidence": pa}
         else:
-            bet = {"label": "Draw", "confidence": round(pd_, 4)}
+            bet = {"label": "Draw", "confidence": pd_}
 
         seen.add(_norm_pair(home_name, away_name))
         tips.append({
@@ -520,8 +520,8 @@ def get_intl_tips(wc_predict_fn) -> list:
             "time":             time_str,
             "utc_kickoff":      utc_iso,
             "status":           status,
-            "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
-            "over_goals":       round(pg, 4),
+            "result":           {"home": ph, "draw": pd_, "away": pa},
+            "over_goals":       pg,
             "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),
             "over_corners":     pred.get("over_corners", 0.52),
             "best_bet":         bet,
@@ -552,11 +552,11 @@ def get_intl_tips(wc_predict_fn) -> list:
 
         best_prob = max(ph, pd_, pa)
         if best_prob == ph:
-            bet = {"label": f"{display_home} to Win", "confidence": round(ph, 4)}
+            bet = {"label": f"{display_home} to Win", "confidence": ph}
         elif best_prob == pa:
-            bet = {"label": f"{display_away} to Win", "confidence": round(pa, 4)}
+            bet = {"label": f"{display_away} to Win", "confidence": pa}
         else:
-            bet = {"label": "Draw", "confidence": round(pd_, 4)}
+            bet = {"label": "Draw", "confidence": pd_}
 
         seen.add(pair)
         tips.append({
@@ -570,8 +570,8 @@ def get_intl_tips(wc_predict_fn) -> list:
             "time":             ev["time"],
             "utc_kickoff":      ev.get("utc_kickoff", ""),
             "status":           status,
-            "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
-            "over_goals":       round(pg, 4),
+            "result":           {"home": ph, "draw": pd_, "away": pa},
+            "over_goals":       pg,
             "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),
             "over_corners":     pred.get("over_corners", 0.52),
             "best_bet":         bet,
@@ -663,8 +663,8 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
                 "is_international": True,
                 "time":             time_str,
                 "utc_kickoff":      utc_iso,
-                "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
-                "over_goals":       round(pg, 4),
+                "result":           {"home": ph, "draw": pd_, "away": pa},
+                "over_goals":       pg,
                 "btts":             (pred or {}).get("btts",         _btts_prob(1.2, 1.2)),
                 "over_corners":     (pred or {}).get("over_corners", 0.52),
                 "best_bet":         {"label": bet_lbl, "confidence": bet_conf},
@@ -738,8 +738,8 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
             "is_international": True,
             "time":             ev["time"],
             "utc_kickoff":      ev.get("utc_kickoff", ""),
-            "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
-            "over_goals":       round(pg, 4),
+            "result":           {"home": ph, "draw": pd_, "away": pa},
+            "over_goals":       pg,
             "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),
             "over_corners":     pred.get("over_corners", 0.52),
             "best_bet":         {"label": bet_lbl, "confidence": bet_conf},

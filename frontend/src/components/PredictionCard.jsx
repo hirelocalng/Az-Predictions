@@ -200,11 +200,11 @@ function BinaryBlock({ label, over, under, labels = ['Over', 'Under'] }) {
       <div className="binary-row">
         <div className={`binary-cell${overWins ? ' win' : ''}`}>
           <div className="b-label">{labels[0]}</div>
-          <div className="b-val">{Math.round(over * 100)}%</div>
+          <div className="b-val">{(over * 100).toFixed(1)}%</div>
         </div>
         <div className={`binary-cell${!overWins ? ' win' : ''}`}>
           <div className="b-label">{labels[1]}</div>
-          <div className="b-val">{Math.round(under * 100)}%</div>
+          <div className="b-val">{(under * 100).toFixed(1)}%</div>
         </div>
       </div>
     </div>
@@ -317,7 +317,7 @@ export default function PredictionCard({ tip, isWC = false }) {
           {bet.odds && (
             <div className="rec-odds">@{Number(bet.odds).toFixed(2)}</div>
           )}
-          <div className="rec-conf">{Math.round(bet.confidence * 100)}% conf.</div>
+          <div className="rec-conf">{(bet.confidence * 100).toFixed(1)}% conf.</div>
         </div>
       </div>
     </div>

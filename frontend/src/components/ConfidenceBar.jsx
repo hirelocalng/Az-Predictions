@@ -13,7 +13,7 @@ export default function ConfidenceBar({ label, value, color = 'g', bold = false,
     return () => obs.disconnect()
   }, [])
 
-  const pct = Math.round(value * 100)
+  const pct = (value * 100).toFixed(1)
 
   return (
     <div className="conf-row" ref={ref}>

@@ -544,10 +544,10 @@ def predict_match(home_raw, away_raw, is_neutral=True,
     goals_proba = goals_model.predict_proba(X)[0]    # [under, over]
 
     return {
-        'home_win':      round(float(res_proba[2]), 4),
-        'draw':          round(float(res_proba[1]), 4),
-        'away_win':      round(float(res_proba[0]), 4),
-        'over_goals':    round(float(goals_proba[1]), 4),
+        'home_win':      float(res_proba[2]),
+        'draw':          float(res_proba[1]),
+        'away_win':      float(res_proba[0]),
+        'over_goals':    float(goals_proba[1]),
         'btts':          _api_btts_prob(home_form['goals_scored'], away_form['goals_scored']),
         'over_corners':  _api_corners_prob(
                              home_form['goals_scored'], away_form['goals_scored'],

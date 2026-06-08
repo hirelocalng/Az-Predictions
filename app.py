@@ -775,6 +775,37 @@ def countdown():
     return jsonify(next_match)
 
 
+@app.route('/api/debug/predict')
+def debug_predict():
+    """Temporary debug endpoint — returns raw prediction for any team pair."""
+    from flask import request as req
+    home = req.args.get('home', '')
+    away = req.args.get('away', '')
+    if not home or not away:
+        return jsonify({'error': 'Pass ?home=X&away=Y'}), 400
+    try:
+        r = predict_match(home, away)
+        return jsonify({
+            'home': home, 'away': away,
+            'resolved_home': r['resolved_home'],
+            'resolved_away': r['resolved_away'],
+            'home_win':     r['home_win'],
+            'draw':         r['draw'],
+            'away_win':     r['away_win'],
+            'over_goals':   r['over_goals'],
+            'btts':         r['btts'],
+            'over_corners': r['over_corners'],
+            'display': {
+                'home_win':   f"{r['home_win']*100:.1f}%",
+                'draw':       f"{r['draw']*100:.1f}%",
+                'away_win':   f"{r['away_win']*100:.1f}%",
+                'over_goals': f"{r['over_goals']*100:.1f}%",
+            }
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
 # ── Daily tips (live fixtures + predictions) ──────────────────────────────────
 
 _DAILY_TIPS_CACHE: dict = {"data": None, "ts": 0.0}

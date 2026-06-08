@@ -22,6 +22,17 @@ warnings.filterwarnings("ignore")
 _FD_URL     = "https://api.football-data.org/v4/matches"
 _FD_HEADERS = {"X-Auth-Token": "118333be3eb84d0ca4e10740f6d62255"}
 
+# TheSportsDB free API — fallback for international friendlies not covered by
+# the football-data.org free tier
+_TSDB_URL = "https://www.thesportsdb.com/api/v1/json/3/eventsday.php"
+
+_INTL_LEAGUE_KWS = frozenset({
+    "international", "friendly", "friendl", "national team",
+    "nations league", "world cup", "euro ", "copa america",
+    "africa cup", "asian cup", "concacaf", "qualification", "qualifier",
+    "warm-up", "warmup",
+})
+
 _MIN_CONF = 0.55
 _MAX_TIPS = 5
 
@@ -362,18 +373,77 @@ def get_club_tips(club_predict_fn) -> list:
 
     return tips
 
+# ── TheSportsDB helpers ───────────────────────────────────────────────────────
+
+def _norm_pair(a: str, b: str) -> frozenset:
+    """Canonical key for deduplication regardless of home/away order."""
+    return frozenset({a.lower().strip(), b.lower().strip()})
+
+
+def _fetch_intl_from_tsdb(today: str) -> list:
+    """
+    Fetch today's international soccer matches from TheSportsDB free API.
+    Returns a list of dicts with keys: home, away, league, time,
+    home_crest, away_crest.
+    """
+    try:
+        r = requests.get(_TSDB_URL, params={"d": today, "s": "Soccer"}, timeout=10)
+        if r.status_code != 200:
+            return []
+        events = r.json().get("events") or []
+        result = []
+        for ev in events:
+            league = (ev.get("strLeague") or "").strip()
+            if not any(kw in league.lower() for kw in _INTL_LEAGUE_KWS):
+                continue
+            home = (ev.get("strHomeTeam") or "").strip()
+            away = (ev.get("strAwayTeam") or "").strip()
+            if not home or not away:
+                continue
+            ts = ev.get("strTimestamp") or ev.get("strTime") or ""
+            try:
+                time_str = (
+                    datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime("%H:%M")
+                    if "T" in ts
+                    else ts[:5] or "?"
+                )
+            except Exception:
+                time_str = "?"
+            result.append({
+                "home":       home,
+                "away":       away,
+                "league":     league or "International Friendly",
+                "time":       time_str,
+                "home_crest": ev.get("strHomeTeamBadge") or "",
+                "away_crest": ev.get("strAwayTeamBadge") or "",
+            })
+        return result
+    except Exception:
+        return []
+
+
 # ── All today's matches via worldcup model (no filter, no confidence floor) ───
 
 def get_intl_tips(wc_predict_fn) -> list:
     """
-    Fetch ALL of today's matches from football-data.org, run every match
-    through the worldcup model (using FIFA ranking features as fallback),
-    and return the full list — no competition filter, no confidence floor.
-    """
-    matches = _fetch_today()
-    tips = []
+    Fetch ALL of today's international matches and return predictions.
 
-    for idx, match in enumerate(matches):
+    Primary source  : football-data.org — covers WCQ, Nations League, EURO, etc.
+    Secondary source: TheSportsDB free API — covers international friendlies that
+                      the football-data.org free tier omits.
+    Matches are deduplicated by team pair so no fixture appears twice.
+    """
+    today  = datetime.now().strftime("%Y-%m-%d")
+    tips   = []
+    seen   = set()   # frozenset of normalised {home, away} pairs
+
+    # ── Primary: football-data.org ────────────────────────────────────────────
+    try:
+        fd_matches = _fetch_today()
+    except Exception:
+        fd_matches = []
+
+    for idx, match in enumerate(fd_matches):
         home_name, away_name = _extract_teams(match)
         if not home_name or not away_name:
             continue
@@ -389,14 +459,11 @@ def get_intl_tips(wc_predict_fn) -> list:
             pred = wc_predict_fn(home_name, away_name, is_neutral=True)
         except Exception:
             continue
-
         if not pred:
             continue
 
-        ph  = pred["home_win"]
-        pd_ = pred["draw"]
-        pa  = pred["away_win"]
-        pg  = pred["over_goals"]
+        ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
+        pg           = pred["over_goals"]
         display_home = pred.get("resolved_home", home_name)
         display_away = pred.get("resolved_away", away_name)
 
@@ -408,22 +475,71 @@ def get_intl_tips(wc_predict_fn) -> list:
         else:
             bet = {"label": "Draw", "confidence": round(pd_, 4)}
 
+        seen.add(_norm_pair(home_name, away_name))
         tips.append({
-            "id":              f"intl{idx + 1}",
-            "league":          comp_name,
-            "home_team":       display_home,
-            "away_team":       display_away,
-            "home_crest":      home_crest,
-            "away_crest":      away_crest,
+            "id":               f"intl{idx + 1}",
+            "league":           comp_name,
+            "home_team":        display_home,
+            "away_team":        display_away,
+            "home_crest":       home_crest,
+            "away_crest":       away_crest,
             "is_international": True,
-            "time":            time_str,
-            "date_label":      date_label,
-            "status":          status,
-            "result":          {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
-            "over_goals":      round(pg, 4),
-            "btts":            pred.get("btts",         _btts_prob(1.2, 1.2)),
-            "over_corners":    pred.get("over_corners", 0.52),
-            "best_bet":        bet,
+            "time":             time_str,
+            "date_label":       date_label,
+            "status":           status,
+            "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
+            "over_goals":       round(pg, 4),
+            "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),
+            "over_corners":     pred.get("over_corners", 0.52),
+            "best_bet":         bet,
+        })
+
+    # ── Secondary: TheSportsDB (international friendlies) ────────────────────
+    tsdb_matches = _fetch_intl_from_tsdb(today)
+    base_idx     = len(tips)
+
+    for jdx, ev in enumerate(tsdb_matches):
+        pair = _norm_pair(ev["home"], ev["away"])
+        if pair in seen:
+            continue  # already covered by football-data.org
+
+        try:
+            pred = wc_predict_fn(ev["home"], ev["away"], is_neutral=True)
+        except Exception:
+            continue
+        if not pred:
+            continue
+
+        ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
+        pg           = pred["over_goals"]
+        display_home = pred.get("resolved_home", ev["home"])
+        display_away = pred.get("resolved_away", ev["away"])
+
+        best_prob = max(ph, pd_, pa)
+        if best_prob == ph:
+            bet = {"label": f"{display_home} to Win", "confidence": round(ph, 4)}
+        elif best_prob == pa:
+            bet = {"label": f"{display_away} to Win", "confidence": round(pa, 4)}
+        else:
+            bet = {"label": "Draw", "confidence": round(pd_, 4)}
+
+        seen.add(pair)
+        tips.append({
+            "id":               f"intl{base_idx + jdx + 1}",
+            "league":           ev["league"],
+            "home_team":        display_home,
+            "away_team":        display_away,
+            "home_crest":       ev["home_crest"],
+            "away_crest":       ev["away_crest"],
+            "is_international": True,
+            "time":             ev["time"],
+            "date_label":       "Today",
+            "status":           "TIMED",
+            "result":           {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
+            "over_goals":       round(pg, 4),
+            "btts":             pred.get("btts",         _btts_prob(1.2, 1.2)),
+            "over_corners":     pred.get("over_corners", 0.52),
+            "best_bet":         bet,
         })
 
     return tips

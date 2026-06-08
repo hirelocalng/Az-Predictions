@@ -112,22 +112,28 @@ def _club_predict(h, a, elo_diff, form5_h, form5_a, oh, od, oa, league_code):
 # ── FIFA World Rankings (approx. June 2025, WC 2026 participants) ─────────────
 
 _FIFA_PTS = {
+    # Top-tier qualifiers
     'Argentina':     1897, 'France':        1870, 'Spain':         1852,
     'England':       1818, 'Brazil':        1793, 'Portugal':      1772,
     'Netherlands':   1749, 'Belgium':       1737, 'Germany':       1728,
     'Colombia':      1709, 'Uruguay':       1704, 'Croatia':       1683,
     'Morocco':       1672, 'United States': 1658, 'USA':           1658,
     'Japan':         1651, 'Mexico':        1641, 'Senegal':       1632,
-    'Serbia':        1625, 'Switzerland':   1620, 'Ecuador':       1618,
-    'Iran':          1610, 'Australia':     1601, 'Denmark':       1598,
-    'South Korea':   1591, 'Poland':        1577, 'Peru':          1572,
-    'Venezuela':     1566, 'Chile':         1558, 'Tunisia':       1554,
-    'Nigeria':       1543, 'Paraguay':      1539, 'Qatar':         1526,
-    'Canada':        1524, 'Saudi Arabia':  1522, 'Jamaica':       1511,
-    'Costa Rica':    1517, 'Panama':        1506, 'Iraq':          1502,
-    'Algeria':       1499, 'Uzbekistan':    1498, 'Mali':          1496,
-    'Ghana':         1490, 'Honduras':      1482, 'Bolivia':       1485,
-    'Indonesia':     1474, 'New Zealand':   1452, 'Cuba':          1430,
+    'Switzerland':   1620, 'Ecuador':       1618,
+    'Iran':          1610, 'Australia':     1601,
+    'South Korea':   1591,
+    'Tunisia':       1554, 'Paraguay':      1539, 'Qatar':         1526,
+    'Canada':        1524, 'Saudi Arabia':  1522,
+    'Panama':        1506, 'Iraq':          1502,
+    'Algeria':       1499, 'Uzbekistan':    1498,
+    'Ghana':         1490, 'New Zealand':   1452,
+    # WC 2026 qualified teams added for prediction fallback
+    'Sweden':        1578, 'Austria':       1572, 'Scotland':      1555,
+    'Norway':        1548, 'Turkey':        1544, 'Czech Republic': 1518,
+    'South Africa':  1505, 'Cape Verde':    1497, 'Egypt':         1492,
+    'Ivory Coast':   1568, 'Bosnia and Herzegovina': 1485,
+    'DR Congo':      1442, 'Haiti':         1335, 'Jordan':        1392,
+    'Curacao':       1340,
 }
 
 # H2H win-rate for the listed-first team (approximated from historical meetings)
@@ -288,36 +294,54 @@ def _wc_predict(home, away, is_neutral=True):
     return _pure_ranking_predict(home, away)
 
 WC_FIXTURES_RAW = [
-    {"id":"wc1","group":"A","home":"Mexico","away":"Uruguay",
-     "home_code":"mx","away_code":"uy",
-     "date":"2026-06-11","time":"20:00","venue":"SoFi Stadium, Los Angeles"},
-    {"id":"wc2","group":"B","home":"USA","away":"Panama",
-     "home_code":"us","away_code":"pa",
-     "date":"2026-06-11","time":"23:00","venue":"MetLife Stadium, New York"},
+    # Group A — opener: Mexico vs South Africa, Estadio Azteca
+    {"id":"wc1","group":"A","home":"Mexico","away":"South Africa",
+     "home_code":"mx","away_code":"za",
+     "date":"2026-06-11","time":"15:00","venue":"Estadio Azteca, Mexico City"},
+    # Group B — opener: Canada vs Bosnia and Herzegovina, BMO Field
+    {"id":"wc2","group":"B","home":"Canada","away":"Bosnia and Herzegovina",
+     "home_code":"ca","away_code":"ba",
+     "date":"2026-06-12","time":"15:00","venue":"BMO Field, Toronto"},
+    # Group C — opener: Brazil vs Morocco, MetLife Stadium
     {"id":"wc3","group":"C","home":"Brazil","away":"Morocco",
      "home_code":"br","away_code":"ma",
-     "date":"2026-06-12","time":"17:00","venue":"Hard Rock Stadium, Miami"},
-    {"id":"wc4","group":"D","home":"Argentina","away":"Poland",
-     "home_code":"ar","away_code":"pl",
-     "date":"2026-06-12","time":"20:00","venue":"AT&T Stadium, Dallas"},
-    {"id":"wc5","group":"E","home":"France","away":"Japan",
-     "home_code":"fr","away_code":"jp",
-     "date":"2026-06-13","time":"17:00","venue":"Rose Bowl, Pasadena"},
-    {"id":"wc6","group":"F","home":"Spain","away":"Nigeria",
-     "home_code":"es","away_code":"ng",
-     "date":"2026-06-13","time":"20:00","venue":"Lincoln Financial, Philadelphia"},
-    {"id":"wc7","group":"G","home":"England","away":"Iran",
-     "home_code":"gb-eng","away_code":"ir",
-     "date":"2026-06-14","time":"14:00","venue":"Gillette Stadium, Boston"},
-    {"id":"wc8","group":"H","home":"Germany","away":"Colombia",
-     "home_code":"de","away_code":"co",
-     "date":"2026-06-14","time":"17:00","venue":"Soldier Field, Chicago"},
-    {"id":"wc9","group":"I","home":"Portugal","away":"Serbia",
-     "home_code":"pt","away_code":"rs",
-     "date":"2026-06-14","time":"20:00","venue":"Levi's Stadium, San Francisco"},
-    {"id":"wc10","group":"J","home":"Netherlands","away":"Senegal",
-     "home_code":"nl","away_code":"sn",
-     "date":"2026-06-15","time":"17:00","venue":"Lumen Field, Seattle"},
+     "date":"2026-06-13","time":"18:00","venue":"MetLife Stadium, East Rutherford NJ"},
+    # Group D — opener: USA vs Paraguay, SoFi Stadium
+    {"id":"wc4","group":"D","home":"USA","away":"Paraguay",
+     "home_code":"us","away_code":"py",
+     "date":"2026-06-12","time":"21:00","venue":"SoFi Stadium, Los Angeles"},
+    # Group E — opener: Germany vs Curacao, NRG Stadium
+    {"id":"wc5","group":"E","home":"Germany","away":"Curacao",
+     "home_code":"de","away_code":"cw",
+     "date":"2026-06-14","time":"13:00","venue":"NRG Stadium, Houston"},
+    # Group F — opener: Netherlands vs Japan, AT&T Stadium
+    {"id":"wc6","group":"F","home":"Netherlands","away":"Japan",
+     "home_code":"nl","away_code":"jp",
+     "date":"2026-06-14","time":"16:00","venue":"AT&T Stadium, Dallas"},
+    # Group G — opener: Belgium vs Egypt, Lumen Field
+    {"id":"wc7","group":"G","home":"Belgium","away":"Egypt",
+     "home_code":"be","away_code":"eg",
+     "date":"2026-06-15","time":"15:00","venue":"Lumen Field, Seattle"},
+    # Group H — opener: Spain vs Cape Verde, Mercedes-Benz Stadium
+    {"id":"wc8","group":"H","home":"Spain","away":"Cape Verde",
+     "home_code":"es","away_code":"cv",
+     "date":"2026-06-15","time":"12:00","venue":"Mercedes-Benz Stadium, Atlanta"},
+    # Group I — opener: France vs Senegal, MetLife Stadium
+    {"id":"wc9","group":"I","home":"France","away":"Senegal",
+     "home_code":"fr","away_code":"sn",
+     "date":"2026-06-16","time":"15:00","venue":"MetLife Stadium, East Rutherford NJ"},
+    # Group J — opener: Argentina vs Algeria, Arrowhead Stadium
+    {"id":"wc10","group":"J","home":"Argentina","away":"Algeria",
+     "home_code":"ar","away_code":"dz",
+     "date":"2026-06-16","time":"21:00","venue":"Arrowhead Stadium, Kansas City"},
+    # Group K — opener: Portugal vs DR Congo, NRG Stadium
+    {"id":"wc11","group":"K","home":"Portugal","away":"DR Congo",
+     "home_code":"pt","away_code":"cd",
+     "date":"2026-06-17","time":"13:00","venue":"NRG Stadium, Houston"},
+    # Group L — opener: England vs Croatia, AT&T Stadium
+    {"id":"wc12","group":"L","home":"England","away":"Croatia",
+     "home_code":"gb-eng","away_code":"hr",
+     "date":"2026-06-17","time":"16:00","venue":"AT&T Stadium, Dallas"},
 ]
 
 def _build_wc_fixtures():

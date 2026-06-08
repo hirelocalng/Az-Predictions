@@ -1,77 +1,96 @@
 import { useState, useEffect } from 'react'
 import ConfidenceBar from './ConfidenceBar.jsx'
 
-// ── Country flag emoji lookup ─────────────────────────────────────────────────
+// ── Country flag image lookup (flagcdn.com codes, all lowercase) ─────────────
 
-const NATION_ISO = {
-  'Brazil': 'BR', 'Argentina': 'AR', 'Mexico': 'MX', 'Germany': 'DE',
-  'France': 'FR', 'Spain': 'ES', 'England': 'GB-ENG', 'Italy': 'IT',
-  'Portugal': 'PT', 'Netherlands': 'NL', 'Belgium': 'BE', 'Croatia': 'HR',
-  'Uruguay': 'UY', 'Colombia': 'CO', 'Chile': 'CL', 'Peru': 'PE',
-  'Ecuador': 'EC', 'Venezuela': 'VE', 'Bolivia': 'BO', 'Paraguay': 'PY',
-  'United States': 'US', 'USA': 'US', 'Canada': 'CA',
-  'Japan': 'JP', 'South Korea': 'KR', 'Australia': 'AU', 'Iran': 'IR',
-  'Saudi Arabia': 'SA', 'Morocco': 'MA', 'Senegal': 'SN', 'Nigeria': 'NG',
-  'Ghana': 'GH', 'Egypt': 'EG', 'Cameroon': 'CM', 'Ivory Coast': 'CI',
-  'South Africa': 'ZA', 'Algeria': 'DZ', 'Tunisia': 'TN', 'Mali': 'ML',
-  'Russia': 'RU', 'Poland': 'PL', 'Sweden': 'SE', 'Denmark': 'DK',
-  'Switzerland': 'CH', 'Austria': 'AT', 'Turkey': 'TR', 'Ukraine': 'UA',
-  'Czech Republic': 'CZ', 'Serbia': 'RS', 'Hungary': 'HU', 'Romania': 'RO',
-  'Scotland': 'GB-SCT', 'Wales': 'GB-WLS', 'Ireland': 'IE',
-  'Panama': 'PA', 'Costa Rica': 'CR', 'Honduras': 'HN', 'Guatemala': 'GT',
-  'Jamaica': 'JM', 'El Salvador': 'SV', 'Trinidad and Tobago': 'TT',
-  'New Zealand': 'NZ', 'Qatar': 'QA', 'Iraq': 'IQ', 'Kuwait': 'KW',
-  'China': 'CN', 'Indonesia': 'ID', 'Vietnam': 'VN', 'Thailand': 'TH',
-  'Malaysia': 'MY', 'Philippines': 'PH', 'India': 'IN',
-  'Congo DR': 'CD', 'Tanzania': 'TZ', 'Zambia': 'ZM', 'Zimbabwe': 'ZW',
-  'Angola': 'AO', 'Mozambique': 'MZ', 'Ethiopia': 'ET', 'Kenya': 'KE',
-  'Greece': 'GR', 'Slovakia': 'SK', 'Slovenia': 'SI', 'Bulgaria': 'BG',
-  'Norway': 'NO', 'Finland': 'FI', 'Iceland': 'IS', 'Albania': 'AL',
-  'North Macedonia': 'MK', 'Montenegro': 'ME', 'Bosnia': 'BA',
-  'Georgia': 'GE', 'Armenia': 'AM', 'Azerbaijan': 'AZ',
-  'Israel': 'IL', 'Jordan': 'JO', 'Lebanon': 'LB', 'Oman': 'OM',
-  'UAE': 'AE', 'United Arab Emirates': 'AE', 'Bahrain': 'BH',
-  'Cape Verde': 'CV', 'Mauritania': 'MR', 'Guinea': 'GN',
-  'Burkina Faso': 'BF', 'Niger': 'NE', 'Benin': 'BJ', 'Togo': 'TG',
-  'Gabon': 'GA', 'Congo': 'CG', 'Rwanda': 'RW', 'Uganda': 'UG',
-  'Libya': 'LY', 'Sudan': 'SD', 'Madagascar': 'MG', 'Comoros': 'KM',
-  'Equatorial Guinea': 'GQ', 'Namibia': 'NA', 'Botswana': 'BW',
-  'China PR': 'CN', 'Korea Republic': 'KR', 'Korea DPR': 'KP',
-  'Türkiye': 'TR', 'Czechia': 'CZ',
+const NATION_FLAGS = {
+  // Americas
+  'Brazil': 'br', 'Argentina': 'ar', 'Mexico': 'mx', 'Colombia': 'co',
+  'Uruguay': 'uy', 'Chile': 'cl', 'Peru': 'pe', 'Ecuador': 'ec',
+  'Venezuela': 've', 'Bolivia': 'bo', 'Paraguay': 'py',
+  'United States': 'us', 'USA': 'us', 'Canada': 'ca',
+  'Panama': 'pa', 'Costa Rica': 'cr', 'Honduras': 'hn',
+  'Guatemala': 'gt', 'Jamaica': 'jm', 'El Salvador': 'sv',
+  'Trinidad and Tobago': 'tt', 'Cuba': 'cu', 'Haiti': 'ht',
+  'Curacao': 'cw', 'Curaçao': 'cw',
+  // Europe
+  'Germany': 'de', 'France': 'fr', 'Spain': 'es', 'Italy': 'it',
+  'Portugal': 'pt', 'Netherlands': 'nl', 'Belgium': 'be', 'Croatia': 'hr',
+  'England': 'gb-eng', 'Scotland': 'gb-sct', 'Wales': 'gb-wls',
+  'Northern Ireland': 'gb-nir', 'Ireland': 'ie', 'Republic of Ireland': 'ie',
+  'Russia': 'ru', 'Poland': 'pl', 'Sweden': 'se', 'Denmark': 'dk',
+  'Switzerland': 'ch', 'Austria': 'at', 'Turkey': 'tr', 'Türkiye': 'tr',
+  'Ukraine': 'ua', 'Czech Republic': 'cz', 'Czechia': 'cz',
+  'Serbia': 'rs', 'Hungary': 'hu', 'Romania': 'ro',
+  'Norway': 'no', 'Finland': 'fi', 'Iceland': 'is', 'Albania': 'al',
+  'North Macedonia': 'mk', 'Montenegro': 'me',
+  'Bosnia and Herzegovina': 'ba', 'Bosnia': 'ba',
+  'Georgia': 'ge', 'Armenia': 'am', 'Azerbaijan': 'az',
+  'Greece': 'gr', 'Slovakia': 'sk', 'Slovenia': 'si', 'Bulgaria': 'bg',
+  'Israel': 'il', 'Kosovo': 'xk', 'Luxembourg': 'lu',
+  'Moldova': 'md', 'Belarus': 'by', 'Lithuania': 'lt',
+  'Latvia': 'lv', 'Estonia': 'ee', 'Cyprus': 'cy', 'Malta': 'mt',
+  'Andorra': 'ad', 'Liechtenstein': 'li', 'San Marino': 'sm',
+  // Asia / Oceania
+  'Japan': 'jp', 'South Korea': 'kr', 'Korea Republic': 'kr',
+  'Australia': 'au', 'Iran': 'ir', 'Saudi Arabia': 'sa',
+  'Iraq': 'iq', 'Jordan': 'jo', 'Qatar': 'qa', 'Kuwait': 'kw',
+  'UAE': 'ae', 'United Arab Emirates': 'ae', 'Bahrain': 'bh',
+  'Uzbekistan': 'uz', 'Indonesia': 'id', 'Vietnam': 'vn',
+  'Thailand': 'th', 'Malaysia': 'my', 'Philippines': 'ph',
+  'India': 'in', 'China': 'cn', 'China PR': 'cn',
+  'New Zealand': 'nz', 'Syria': 'sy', 'Lebanon': 'lb', 'Oman': 'om',
+  'Yemen': 'ye', 'Palestine': 'ps', 'Kyrgyzstan': 'kg',
+  'Tajikistan': 'tj', 'Turkmenistan': 'tm', 'Kazakhstan': 'kz',
+  'North Korea': 'kp', 'Korea DPR': 'kp',
+  // Africa
+  'Morocco': 'ma', 'Senegal': 'sn', 'Nigeria': 'ng',
+  'Ghana': 'gh', 'Egypt': 'eg', 'Cameroon': 'cm',
+  'Ivory Coast': 'ci', "Côte d'Ivoire": 'ci', "Cote d'Ivoire": 'ci',
+  'South Africa': 'za', 'Algeria': 'dz', 'Tunisia': 'tn', 'Mali': 'ml',
+  'Cape Verde': 'cv', 'DR Congo': 'cd', 'Congo DR': 'cd',
+  'Democratic Republic of Congo': 'cd',
+  'Burkina Faso': 'bf', 'Niger': 'ne', 'Benin': 'bj', 'Togo': 'tg',
+  'Gabon': 'ga', 'Congo': 'cg', 'Rwanda': 'rw', 'Uganda': 'ug',
+  'Tanzania': 'tz', 'Zambia': 'zm', 'Zimbabwe': 'zw', 'Angola': 'ao',
+  'Mozambique': 'mz', 'Ethiopia': 'et', 'Kenya': 'ke', 'Libya': 'ly',
+  'Sudan': 'sd', 'Madagascar': 'mg', 'Comoros': 'km',
+  'Equatorial Guinea': 'gq', 'Namibia': 'na', 'Botswana': 'bw',
+  'Mauritania': 'mr', 'Guinea': 'gn', 'Liberia': 'lr',
 }
 
-const isoToEmoji = iso => {
-  const code = iso.toUpperCase().replace(/^GB-.*/, 'GB')
-  return code.replace(/./g, c => String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65))
-}
-
-const countryFlag = name => {
-  const iso = NATION_ISO[name]
-  return iso ? isoToEmoji(iso) : null
+const flagUrl = name => {
+  const code = NATION_FLAGS[name]
+  return code ? `https://flagcdn.com/w40/${code}.png` : null
 }
 
 
 // ── Team badge ────────────────────────────────────────────────────────────────
 
 function TeamBadge({ crest, name, isIntl }) {
-  const [imgErr, setImgErr] = useState(false)
+  const [crestErr, setCrestErr] = useState(false)
+  const [flagErr,  setFlagErr]  = useState(false)
 
   if (isIntl) {
-    const flag = countryFlag(name)
+    const src = flagUrl(name)
+    if (src && !flagErr) {
+      return (
+        <div className="team-badge">
+          <img src={src} alt={name} onError={() => setFlagErr(true)} />
+        </div>
+      )
+    }
     return (
-      <div className="team-badge team-badge--flag">
-        {flag
-          ? <span className="flag-emoji" role="img" aria-label={name}>{flag}</span>
-          : <span className="badge-abbr">{(name || '').slice(0, 3).toUpperCase()}</span>
-        }
+      <div className="team-badge team-badge--abbr">
+        <span className="badge-abbr">{(name || '').slice(0, 3).toUpperCase()}</span>
       </div>
     )
   }
 
-  if (crest && !imgErr) {
+  if (crest && !crestErr) {
     return (
       <div className="team-badge team-badge--crest">
-        <img src={crest} alt={name} onError={() => setImgErr(true)} />
+        <img src={crest} alt={name} onError={() => setCrestErr(true)} />
       </div>
     )
   }

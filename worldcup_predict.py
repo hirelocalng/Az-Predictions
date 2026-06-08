@@ -53,23 +53,52 @@ TOURNAMENT_IMPORTANCE = {
 
 # Common name aliases -> canonical name in dataset
 TEAM_ALIASES = {
-    'usa':              'United States',
-    'us':               'United States',
-    'america':          'United States',
-    'uk':               'England',
-    'great britain':    'England',
-    'south korea':      'South Korea',
-    'korea':            'South Korea',
-    'dpr korea':        'North Korea',
-    'north korea':      'North Korea',
-    'ivory coast':      "Ivory Coast",
-    "cote d'ivoire":    "Ivory Coast",
-    'iran':             'Iran',
-    'russia':           'Russia',
-    'czechia':          'Czech Republic',
-    'czech':            'Czech Republic',
-    'türkiye':          'Turkey',
-    'turkiye':          'Turkey',
+    # USA / UK variants
+    'usa':                          'United States',
+    'us':                           'United States',
+    'america':                      'United States',
+    'uk':                           'England',
+    'great britain':                'England',
+    # Korea / Iran / Russia
+    'south korea':                  'South Korea',
+    'korea':                        'South Korea',
+    'korea republic':               'South Korea',
+    'republic of korea':            'South Korea',
+    'dpr korea':                    'North Korea',
+    'north korea':                  'North Korea',
+    'iran':                         'Iran',
+    'russia':                       'Russia',
+    # Turkey / Czech
+    'czechia':                      'Czech Republic',
+    'czech':                        'Czech Republic',
+    'türkiye':                      'Turkey',
+    'turkiye':                      'Turkey',
+    # Ivory Coast
+    'ivory coast':                  'Ivory Coast',
+    "cote d'ivoire":                'Ivory Coast',
+    "côte d'ivoire":                'Ivory Coast',
+    # Bosnia
+    'bosnia':                       'Bosnia and Herzegovina',
+    'bosnia & herzegovina':         'Bosnia and Herzegovina',
+    'bosnia-herzegovina':           'Bosnia and Herzegovina',
+    # DR Congo
+    'dr congo':                     'DR Congo',
+    'democratic republic of congo': 'DR Congo',
+    'congo dr':                     'DR Congo',
+    'drc':                          'DR Congo',
+    # Ireland
+    'republic of ireland':          'Republic of Ireland',
+    'northern ireland':             'Northern Ireland',
+    # Other common ESPN / API variants
+    'cape verde':                   'Cape Verde',
+    'cabo verde':                   'Cape Verde',
+    'curacao':                      'Curaçao',
+    'trinidad & tobago':            'Trinidad and Tobago',
+    'trinidad':                     'Trinidad and Tobago',
+    'north macedonia':              'North Macedonia',
+    'uae':                          'United Arab Emirates',
+    'saudi arabia':                 'Saudi Arabia',
+    'new zealand':                  'New Zealand',
 }
 
 

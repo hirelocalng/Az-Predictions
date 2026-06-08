@@ -20,10 +20,6 @@ export default function IntlSection() {
         <h2 className="section-title">
           International <span className="green">Friendlies</span> &amp; Fixtures
         </h2>
-        <p className="section-sub">
-          Daily international fixtures — friendlies, qualifiers, Nations League,
-          and tournaments — run through XGBoost models trained on 49,000+ matches.
-        </p>
       </div>
 
       {loading && (

@@ -24,10 +24,6 @@ export default function ClubSection() {
         <h2 className="section-title">
           Daily <span className="green">Tips</span>
         </h2>
-        <p className="section-sub">
-          XGBoost predictions from 231,000+ club matches. ELO ratings,
-          implied market probabilities, rolling form.
-        </p>
       </div>
 
       {!loading && tips.length > 0 && (

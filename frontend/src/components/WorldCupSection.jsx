@@ -21,10 +21,6 @@ export default function WorldCupSection() {
         <h2 className="section-title">
           Group Stage <span className="amber">Predictions</span>
         </h2>
-        <p className="section-sub">
-          Powered by 49,000+ international matches. Rolling form, H2H records,
-          and tournament importance weighting.
-        </p>
       </div>
 
       <CountdownTimer />

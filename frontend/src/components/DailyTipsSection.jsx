@@ -25,11 +25,6 @@ export default function DailyTipsSection() {
         <h2 className="section-title">
           Today's <span className="green">Best</span> Predictions
         </h2>
-        <p className="section-sub">
-          Live fixtures from World Cup 2026, Champions League, Premier League, La Liga, Bundesliga,
-          Serie A, Ligue 1, Brazil Série A, and international warm-up matches.
-          Only predictions with ≥50% model confidence shown, ranked highest first.
-        </p>
       </div>
 
       {!loading && fetchedAt && (

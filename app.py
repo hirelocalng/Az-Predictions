@@ -1625,19 +1625,38 @@ def best_bet_of_day():
 @app.route('/api/results')
 def results_history():
     """Return completed prediction history with stats."""
+    now   = datetime.now(timezone.utc)
     data  = _get_history()
     preds = data.get('predictions', [])
-    completed = sorted(
-        [p for p in preds if p['result_status'] in ('WON', 'LOST')],
-        key=lambda p: p.get('match_date', ''), reverse=True
-    )
-    won  = sum(1 for p in completed if p['result_status'] == 'WON')
-    lost = len(completed) - won
-    win_rate = round(won / len(completed) * 100, 1) if completed else 0.0
+
+    finished = []
+    for p in preds:
+        if p['result_status'] in ('WON', 'LOST'):
+            finished.append(p)
+        elif p['result_status'] in ('PENDING', 'LIVE'):
+            kickoff_str = p.get('kickoff_utc')
+            try:
+                if kickoff_str:
+                    ko = datetime.fromisoformat(str(kickoff_str).replace('Z', '+00:00'))
+                elif p.get('match_date'):
+                    ko = datetime.fromisoformat(f"{p['match_date']}T23:00:00+00:00")
+                else:
+                    continue
+                if ko + timedelta(hours=2) < now:
+                    finished.append(p)
+            except Exception:
+                pass
+
+    finished = sorted(finished, key=lambda p: p.get('match_date', ''), reverse=True)
+
+    resolved   = [p for p in finished if p['result_status'] in ('WON', 'LOST')]
+    won        = sum(1 for p in resolved if p['result_status'] == 'WON')
+    lost       = len(resolved) - won
+    win_rate   = round(won / len(resolved) * 100, 1) if resolved else 0.0
 
     streak = 0
     streak_type = None
-    for p in completed:
+    for p in resolved:
         if streak_type is None:
             streak_type = p['result_status']
             streak = 1
@@ -1648,14 +1667,14 @@ def results_history():
 
     return jsonify({
         'stats': {
-            'total':       len(completed),
+            'total':       len(resolved),
             'won':         won,
             'lost':        lost,
             'win_rate':    win_rate,
             'streak':      streak,
             'streak_type': streak_type,
         },
-        'predictions': completed,
+        'predictions': finished,
     })
 
 

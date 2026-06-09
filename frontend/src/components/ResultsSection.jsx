@@ -11,22 +11,25 @@ function StatCard({ value, label, sub, color }) {
 }
 
 function ResultRow({ pred }) {
-  const won  = pred.result_status === 'WON'
+  const status   = pred.result_status
+  const won      = status === 'WON'
+  const resolved = status === 'WON' || status === 'LOST'
   const date = pred.match_date
     ? new Date(pred.match_date + 'T12:00:00Z').toLocaleDateString('en-GB', {
         day: 'numeric', month: 'short', timeZone: 'UTC',
       })
     : '—'
 
-  const score = pred.actual_home_score !== null && pred.actual_away_score !== null
+  const score = pred.actual_home_score != null && pred.actual_away_score != null
     ? `${pred.actual_home_score}–${pred.actual_away_score}`
     : '—'
 
   return (
-    <div className={`res-row ${won ? 'res-row-won' : 'res-row-lost'}`}>
+    <div className={`res-row ${won ? 'res-row-won' : resolved ? 'res-row-lost' : 'res-row-pending'}`}>
       <div className="res-row-badge">
-        {won ? <span className="res-badge won">✅ WON</span>
-              : <span className="res-badge lost">❌ LOST</span>}
+        {won      ? <span className="res-badge won">✅ WON</span>
+         : resolved ? <span className="res-badge lost">❌ LOST</span>
+                    : <span className="res-badge pending">⏳ PENDING</span>}
       </div>
 
       <div className="res-row-teams">

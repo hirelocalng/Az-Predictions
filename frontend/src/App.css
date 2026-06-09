@@ -613,9 +613,11 @@ body::after {
 .res-row:hover { border-color: var(--border-hi); background: var(--bg-hover); }
 .res-row-won { border-left: 3px solid var(--green) !important; }
 .res-row-lost { border-left: 3px solid var(--red) !important; }
+.res-row-pending { border-left: 3px solid var(--amber) !important; opacity: 0.7; }
 .res-badge { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em; padding: 3px 10px; border-radius: 20px; }
 .res-badge.won { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
 .res-badge.lost { background: var(--red-dim); color: var(--red); border: 1px solid rgba(255,77,109,.25); }
+.res-badge.pending { background: rgba(240,165,0,.12); color: var(--amber); border: 1px solid rgba(240,165,0,.25); }
 .res-row-teams { display: flex; align-items: center; gap: 6px; flex: 1; font-size: 0.82rem; }
 .res-home,.res-away { font-weight: 600; color: var(--text); }
 .res-vs { font-size: 0.68rem; color: var(--text-subtle); }

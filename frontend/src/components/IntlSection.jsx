@@ -20,8 +20,12 @@ export default function IntlSection() {
       .catch(() => { setError(true); setLoading(false) })
   }, [])
 
-  const free   = fixtures.slice(0, FREE_LIMIT)
-  const locked = fixtures.slice(FREE_LIMIT)
+  const isFinished = f => f.utc_kickoff
+    ? Date.now() > new Date(f.utc_kickoff).getTime() + 2 * 60 * 60 * 1000
+    : false
+  const upcoming = fixtures.filter(f => !isFinished(f))
+  const free   = upcoming.slice(0, FREE_LIMIT)
+  const locked = upcoming.slice(FREE_LIMIT)
 
   return (
     <section className="section" id="intl">
@@ -48,13 +52,15 @@ export default function IntlSection() {
         </p>
       )}
 
-      {!loading && !error && fixtures.length === 0 && (
+      {!loading && !error && upcoming.length === 0 && (
         <p style={{ textAlign:'center', color:'var(--text-muted)', padding:'40px 0' }}>
-          No international matches today — check back tomorrow.
+          {fixtures.length > 0
+            ? "All international fixtures today have finished — check History for results."
+            : "No international matches today — check back tomorrow."}
         </p>
       )}
 
-      {!loading && !error && fixtures.length > 0 && (
+      {!loading && !error && upcoming.length > 0 && (
         <>
           <div className="grid-3">
             {free.map(f => <PredictionCard key={f.id} tip={f} />)}

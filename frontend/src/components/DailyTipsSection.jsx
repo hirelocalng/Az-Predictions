@@ -18,6 +18,11 @@ export default function DailyTipsSection() {
 
   useEffect(() => { load() }, [load])
 
+  const isFinished = tip => tip.utc_kickoff
+    ? Date.now() > new Date(tip.utc_kickoff).getTime() + 2 * 60 * 60 * 1000
+    : false
+  const upcoming = tips.filter(t => !isFinished(t))
+
   return (
     <section className="section" id="daily-tips">
       <div className="section-header">
@@ -54,15 +59,17 @@ export default function DailyTipsSection() {
         </p>
       )}
 
-      {!loading && !error && tips.length === 0 && (
+      {!loading && !error && upcoming.length === 0 && (
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
-          No fixtures scheduled today in the tracked competitions.
+          {tips.length > 0
+            ? "All of today's fixtures have finished — check History for results."
+            : "No fixtures scheduled today in the tracked competitions."}
         </p>
       )}
 
-      {!loading && !error && tips.length > 0 && (
+      {!loading && !error && upcoming.length > 0 && (
         <div className="grid-2">
-          {tips.map(tip => (
+          {upcoming.map(tip => (
             <PredictionCard key={tip.id} tip={tip} />
           ))}
         </div>

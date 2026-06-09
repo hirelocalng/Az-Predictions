@@ -21,8 +21,12 @@ export default function ClubSection() {
       .catch(() => { setError(true); setLoading(false) })
   }, [])
 
+  const isFinished = t => t.utc_kickoff
+    ? Date.now() > new Date(t.utc_kickoff).getTime() + 2 * 60 * 60 * 1000
+    : false
   const leagues = ['All', ...new Set(tips.map(t => t.league))]
-  const filtered = filter === 'All' ? tips : tips.filter(t => t.league === filter)
+  const filtered = (filter === 'All' ? tips : tips.filter(t => t.league === filter))
+    .filter(t => !isFinished(t))
   const free     = filtered.slice(0, FREE_LIMIT)
   const locked   = filtered.slice(FREE_LIMIT)
 

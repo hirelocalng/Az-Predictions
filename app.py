@@ -861,7 +861,7 @@ def _check_pending_results():
                 cur.execute("""
                     SELECT match_id, home_team, away_team, match_date,
                            predicted_winner, kickoff_utc
-                    FROM predictions WHERE result_status = 'PENDING'
+                    FROM predictions WHERE result_status IN ('PENDING', 'LIVE')
                 """)
                 pending = cur.fetchall()
                 for mid, home, away, match_date, pw, kickoff_str in pending:
@@ -901,7 +901,7 @@ def _check_pending_results():
         data = _read_raw_history()
         changed = False
         for pred in data['predictions']:
-            if pred['result_status'] != 'PENDING':
+            if pred['result_status'] not in ('PENDING', 'LIVE'):
                 continue
             kickoff_str = pred.get('kickoff_utc', '')
             match_date  = pred.get('match_date', '')
@@ -1026,7 +1026,7 @@ def _update_live_scores():
                     if ev:
                         hs, as_ = ev['home_score'], ev['away_score']
                         minute  = ev.get('minute', '')
-                        if ev['espn_status'] == 'STATUS_FINAL':
+                        if ev['espn_status'] in _ESPN_DONE:
                             status = _resolve_result(pw or '', home or '', away or '', hs, as_)
                             cur.execute("""
                                 UPDATE predictions

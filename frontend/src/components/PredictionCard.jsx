@@ -194,11 +194,12 @@ function KickoffCountdown({ utcDate }) {
 // ── Live match badge ──────────────────────────────────────────────────────────
 
 function LiveBadge({ score1, score2, minute }) {
+  const hasScore = score1 != null && score2 != null
   return (
     <div className="live-badge">
       <span className="live-pulse" aria-hidden="true" />
       <span className="live-label">LIVE</span>
-      <span className="live-score-inline">{score1} – {score2}</span>
+      {hasScore && <span className="live-score-inline">{score1} – {score2}</span>}
       {minute && <span className="live-minute-inline">{minute}</span>}
     </div>
   )
@@ -250,7 +251,13 @@ export default function PredictionCard({ tip, isWC = false }) {
     ? `${_matchDate}/${homeTeam.toLowerCase().trim()}/${awayTeam.toLowerCase().trim()}`
     : null
   const liveData = _matchId ? liveScores[_matchId] : null
-  const isLive   = Boolean(liveData)
+
+  // True when: DB says LIVE, fixture status says in-play, OR kickoff passed within 2h window
+  const _kickoffMs  = tip.utc_kickoff ? new Date(tip.utc_kickoff).getTime() : null
+  const _now        = Date.now()
+  const _statusLive = tip.status === 'IN_PLAY' || tip.status === 'PAUSED'
+  const _timeLive   = Boolean(_kickoffMs && _now >= _kickoffMs && _now < _kickoffMs + 120 * 60_000)
+  const isLive      = Boolean(liveData) || _statusLive || _timeLive
 
   // Daily-tips cards carry crest + is_international; legacy cards carry code/color
   const hasCrest   = tip.home_crest || tip.away_crest
@@ -271,9 +278,9 @@ export default function PredictionCard({ tip, isWC = false }) {
         <div className="card-time-row">
           {isLive
             ? <LiveBadge
-                score1={liveData.live_home_score ?? 0}
-                score2={liveData.live_away_score ?? 0}
-                minute={liveData.live_minute}
+                score1={liveData?.live_home_score ?? null}
+                score2={liveData?.live_away_score ?? null}
+                minute={liveData?.live_minute}
               />
             : <>
                 <span className="card-date-pill">
@@ -300,9 +307,9 @@ export default function PredictionCard({ tip, isWC = false }) {
           <div className="team-name">{homeTeam}</div>
         </div>
         <div className="card-versus">
-          {isLive
+          {isLive && liveData?.live_home_score != null
             ? <span className="live-match-score">
-                {liveData.live_home_score ?? 0}–{liveData.live_away_score ?? 0}
+                {liveData.live_home_score}–{liveData.live_away_score}
               </span>
             : 'vs'}
         </div>

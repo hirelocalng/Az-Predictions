@@ -392,6 +392,7 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     p_over     = pred['over_goals']
     p_under    = 1.0 - p_over
     p_btts     = pred['btts']
+    p_corners  = pred['over_corners']
 
     # For expected goals display, load data from the cached DF if available
     df = _PRED_DF if _PRED_DF is not None else load_data()
@@ -447,6 +448,13 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
           f'(total {exp_total:.1f})')
     print(f'  Most likely: {goals_call}  ({max(p_over, p_under):.1%} confidence)')
 
+    # Corners prediction
+    corners_call = 'Over 9.5' if p_corners >= 0.50 else 'Under 9.5'
+    print(f'\n  -- CORNERS PREDICTION --')
+    print(f'  Over 9.5     : {p_corners:6.1%}   {confidence_label(p_corners) if corners_call=="Over 9.5" else ""}')
+    print(f'  Under 9.5    : {1-p_corners:6.1%}   {confidence_label(1-p_corners) if corners_call=="Under 9.5" else ""}')
+    print(f'  Most likely: {corners_call}  ({max(p_corners, 1-p_corners):.1%} confidence)')
+
     print(f'\n{sep}\n')
 
     # Betting summary
@@ -454,6 +462,7 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     print(f'  Match Result  -> {winner} ({top_prob:.1%})')
     print(f'  Goals O/U 2.5 -> {goals_call} ({max(p_over, p_under):.1%})')
     print(f'  Both Teams Score -> {p_btts:.1%}')
+    print(f'  Corners O/U 9.5  -> {corners_call} ({max(p_corners, 1-p_corners):.1%})')
     print(f'{sep}\n')
 
 

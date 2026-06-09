@@ -1455,34 +1455,6 @@ def debug_predict():
         return jsonify({'error': str(e)}), 400
 
 
-@app.route('/api/health')
-def health():
-    """Deployment health check — confirms which code + models are running."""
-    try:
-        r = predict_match('Peru', 'Spain')
-        return jsonify({
-            'status':      'ok',
-            'base_dir':    _BASE_DIR,
-            'wc_data':     _WC_DATA_PATH,
-            'peru_spain': {
-                'peru_win':   f"{r['home_win']*100:.1f}%",
-                'draw':       f"{r['draw']*100:.1f}%",
-                'spain_win':  f"{r['away_win']*100:.1f}%",
-                'over_goals': f"{r['over_goals']*100:.1f}%",
-                'btts':       f"{r['btts']*100:.1f}%",
-            },
-            'expected': {
-                'peru_win':   '5.0%',
-                'draw':       '18.1%',
-                'spain_win':  '76.9%',
-                'over_goals': '35.9%',
-                'btts':       '47.0%',
-            },
-        })
-    except Exception as e:
-        return jsonify({'status': 'error', 'detail': str(e)}), 500
-
-
 # ── Daily tips (live fixtures + predictions) ──────────────────────────────────
 
 _DAILY_TIPS_CACHE: dict = {"data": None, "ts": 0.0}

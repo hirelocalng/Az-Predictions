@@ -60,11 +60,11 @@ _PAYSTACK_PUBLIC = os.environ.get('PAYSTACK_PUBLIC_KEY', '')
 
 
 def _build_db_url():
-    """Return a psycopg2-ready URL: postgresql:// scheme + sslmode=require for Railway."""
+    """Return a psycopg-ready URL: postgresql:// scheme + sslmode=require for Railway."""
     url = _DB_URL
     if not url:
         return url
-    # Railway sometimes provides postgres:// — psycopg2 requires postgresql://
+    # Railway sometimes provides postgres:// — psycopg requires postgresql://
     if url.startswith('postgres://'):
         url = 'postgresql://' + url[len('postgres://'):]
     # Railway PostgreSQL requires SSL; append only if not already specified
@@ -83,8 +83,8 @@ def _db():
         return
     conn = cur = None
     try:
-        import psycopg2
-        conn = psycopg2.connect(_DB_CONN_URL)
+        import psycopg
+        conn = psycopg.connect(_DB_CONN_URL)
         cur  = conn.cursor()
         yield conn, cur
         conn.commit()

@@ -58,6 +58,10 @@ _DB_URL         = os.environ.get('DATABASE_URL', '')
 _KORAPAY_SECRET = os.environ.get('KORAPAY_SECRET_KEY', '')
 _KORAPAY_PUBLIC = os.environ.get('KORAPAY_PUBLIC_KEY', '')
 
+logging.basicConfig(level=logging.INFO)
+_log.info('KORAPAY_PUBLIC_KEY set: %s', bool(_KORAPAY_PUBLIC))
+_log.info('KORAPAY_SECRET_KEY set: %s', bool(_KORAPAY_SECRET))
+
 
 def _build_db_url():
     """Return a psycopg-ready URL: postgresql:// scheme + sslmode=require for Railway."""

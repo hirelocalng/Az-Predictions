@@ -1743,7 +1743,9 @@ def auth_register():
                         'user':  {'id': user_id, 'name': name,
                                   'email': email, 'is_premium': False}}), 201
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        msg = str(e) or repr(e)
+        print(f'auth_register error: {msg}', flush=True)
+        return jsonify({'error': msg or 'Registration failed — server error'}), 500
 
 
 @app.route('/api/auth/login', methods=['POST'])
@@ -1777,7 +1779,9 @@ def auth_login():
                         'user':  {'id': uid, 'name': uname,
                                   'email': uemail, 'is_premium': bool(is_prem)}})
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        msg = str(e) or repr(e)
+        print(f'auth_login error: {msg}', flush=True)
+        return jsonify({'error': msg or 'Login failed — server error'}), 500
 
 
 @app.route('/api/auth/me')

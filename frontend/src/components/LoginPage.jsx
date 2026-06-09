@@ -28,11 +28,15 @@ export default function LoginPage({ navigate, onAuth }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       })
-      const data = await r.json()
-      if (!r.ok) { setError(data.error || 'Login failed'); return }
+      let data = {}
+      try { data = await r.json() } catch { /* non-JSON response */ }
+      if (!r.ok) {
+        setError(data.error || `Server error (${r.status}) — please try again`)
+        return
+      }
       onAuth(data)
       navigate('/')
-    } catch { setError('Network error — please try again') }
+    } catch (err) { setError('Network error — check your connection and try again') }
     finally { setLoading(false) }
   }
 

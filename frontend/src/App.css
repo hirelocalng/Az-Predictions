@@ -1069,3 +1069,59 @@ body::after {
   .res-stats-row { gap: 10px; }
   .res-stat-card { min-width: 90px; padding: 14px 12px; }
 }
+
+/* ── Live match indicators ───────────────────────────────────────────────────── */
+
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(224,82,82,0.12);
+  border: 1px solid rgba(224,82,82,0.28);
+  border-radius: 20px;
+  padding: 3px 10px 3px 7px;
+  font-size: 0.68rem;
+}
+
+.live-pulse {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: livePulse 1.2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.live-label {
+  color: var(--red);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  font-size: 0.66rem;
+}
+
+.live-score-inline {
+  color: var(--text);
+  font-weight: 800;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-minute-inline {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  margin-left: 1px;
+}
+
+.live-match-score {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes livePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.35; transform: scale(1.4); }
+}

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import ConfidenceBar from './ConfidenceBar.jsx'
+import { useLiveScores } from '../contexts/LiveScoresContext.jsx'
 
 // ── Country flag image lookup (flagcdn.com codes, all lowercase) ─────────────
 
@@ -190,6 +191,20 @@ function KickoffCountdown({ utcDate }) {
 }
 
 
+// ── Live match badge ──────────────────────────────────────────────────────────
+
+function LiveBadge({ score1, score2, minute }) {
+  return (
+    <div className="live-badge">
+      <span className="live-pulse" aria-hidden="true" />
+      <span className="live-label">LIVE</span>
+      <span className="live-score-inline">{score1} – {score2}</span>
+      {minute && <span className="live-minute-inline">{minute}</span>}
+    </div>
+  )
+}
+
+
 // ── Binary outcome block ──────────────────────────────────────────────────────
 
 function BinaryBlock({ label, over, under, labels = ['Over', 'Under'] }) {
@@ -229,6 +244,14 @@ export default function PredictionCard({ tip, isWC = false }) {
   const homeTeam = tip.home_team ?? tip.home
   const awayTeam = tip.away_team ?? tip.away
 
+  const liveScores = useLiveScores()
+  const _matchDate = (tip.utc_kickoff ?? '').slice(0, 10) || tip.date || ''
+  const _matchId   = _matchDate && homeTeam && awayTeam
+    ? `${_matchDate}/${homeTeam.toLowerCase().trim()}/${awayTeam.toLowerCase().trim()}`
+    : null
+  const liveData = _matchId ? liveScores[_matchId] : null
+  const isLive   = Boolean(liveData)
+
   // Daily-tips cards carry crest + is_international; legacy cards carry code/color
   const hasCrest   = tip.home_crest || tip.away_crest
   const isIntlCard = tip.is_international ?? isWC
@@ -246,13 +269,22 @@ export default function PredictionCard({ tip, isWC = false }) {
           }
         </div>
         <div className="card-time-row">
-          <span className="card-date-pill">
-            {localDateLabel(tip.utc_kickoff, tip.status) ?? tip.date_label ?? tip.date}
-          </span>
-          <span className="card-kickoff">
-            {localTime(tip.utc_kickoff) ?? tip.time}
-          </span>
-          {tip.utc_kickoff && <KickoffCountdown utcDate={tip.utc_kickoff} />}
+          {isLive
+            ? <LiveBadge
+                score1={liveData.live_home_score ?? 0}
+                score2={liveData.live_away_score ?? 0}
+                minute={liveData.live_minute}
+              />
+            : <>
+                <span className="card-date-pill">
+                  {localDateLabel(tip.utc_kickoff, tip.status) ?? tip.date_label ?? tip.date}
+                </span>
+                <span className="card-kickoff">
+                  {localTime(tip.utc_kickoff) ?? tip.time}
+                </span>
+                {tip.utc_kickoff && <KickoffCountdown utcDate={tip.utc_kickoff} />}
+              </>
+          }
         </div>
       </div>
 
@@ -267,7 +299,13 @@ export default function PredictionCard({ tip, isWC = false }) {
           }
           <div className="team-name">{homeTeam}</div>
         </div>
-        <div className="card-versus">vs</div>
+        <div className="card-versus">
+          {isLive
+            ? <span className="live-match-score">
+                {liveData.live_home_score ?? 0}–{liveData.live_away_score ?? 0}
+              </span>
+            : 'vs'}
+        </div>
         <div className="card-team">
           {hasCrest
             ? <TeamBadge crest={tip.away_crest} name={awayTeam} isIntl={isIntlCard} />

@@ -104,6 +104,13 @@ def _init_db():
                     created_at        TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
+            for _col in [
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS match_status VARCHAR(20) DEFAULT 'SCHEDULED'",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_home_score INTEGER",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_away_score INTEGER",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_minute VARCHAR(10)",
+            ]:
+                cur.execute(_col)
         _log.info('DB: predictions table ready')
     except Exception as e:
         _log.error('DB init: %s', e)
@@ -757,6 +764,125 @@ def _check_pending_results():
         if changed:
             _write_raw_history(data)
 
+# ── ESPN live-score polling ───────────────────────────────────────────────────
+
+_ESPN_LIVE_LEAGUES = ['fifa.world', 'fifa.friendly', 'uefa.friendly', 'conmebol.friendly']
+
+
+def _fetch_espn_events():
+    """Return dict of (home_lower, away_lower) → event data for live/final matches."""
+    import requests as _req
+    found = {}
+    for slug in _ESPN_LIVE_LEAGUES:
+        url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard'
+        try:
+            r = _req.get(url, timeout=8)
+            if r.status_code != 200:
+                continue
+            for ev in (r.json().get('events') or []):
+                comp = (ev.get('competitions') or [{}])[0]
+                sname = (comp.get('status') or {}).get('type', {}).get('name', '')
+                if sname not in ('STATUS_IN_PROGRESS', 'STATUS_HALFTIME', 'STATUS_FINAL'):
+                    continue
+                competitors = comp.get('competitors') or []
+                hc = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+                ac = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+                if not hc or not ac:
+                    continue
+                hn  = (hc.get('team', {}).get('displayName') or '').strip()
+                an  = (ac.get('team', {}).get('displayName') or '').strip()
+                hs  = int(hc.get('score') or 0)
+                as_ = int(ac.get('score') or 0)
+                minute = (comp.get('status') or {}).get('displayClock', '')
+                found[(hn.lower(), an.lower())] = {
+                    'home': hn, 'away': an,
+                    'home_score': hs, 'away_score': as_,
+                    'minute': minute, 'espn_status': sname,
+                }
+        except Exception as exc:
+            _log.warning('ESPN poll %s: %s', slug, exc)
+    return found
+
+
+def _espn_match(espn, home_pred, away_pred):
+    """Find ESPN event for predicted teams (fuzzy); swap scores if reversed."""
+    for (eh, ea), ev in espn.items():
+        if _team_similar(eh, home_pred) and _team_similar(ea, away_pred):
+            return ev
+        if _team_similar(eh, away_pred) and _team_similar(ea, home_pred):
+            return {**ev, 'home_score': ev['away_score'], 'away_score': ev['home_score']}
+    return None
+
+
+def _update_live_scores():
+    """APScheduler job (every 2 min): update live scores then check final results."""
+    _log.info('APScheduler: live poll + result check…')
+    now  = datetime.now(timezone.utc)
+    espn = _fetch_espn_events()
+
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, match_date,
+                           predicted_winner, kickoff_utc, result_status
+                    FROM predictions
+                    WHERE result_status IN ('PENDING', 'LIVE')
+                """)
+                rows = cur.fetchall()
+                for mid, home, away, match_date, pw, kickoff_str, curr_status in rows:
+                    ev = _espn_match(espn, home or '', away or '')
+                    if ev:
+                        hs, as_ = ev['home_score'], ev['away_score']
+                        minute  = ev.get('minute', '')
+                        if ev['espn_status'] == 'STATUS_FINAL':
+                            status = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                            cur.execute("""
+                                UPDATE predictions
+                                SET actual_home_score=%s, actual_away_score=%s,
+                                    result_status=%s, match_status='FINISHED',
+                                    live_home_score=%s, live_away_score=%s
+                                WHERE match_id=%s
+                            """, (hs, as_, status, hs, as_, mid))
+                            _log.info('FINISHED %s %d-%d %s → %s', home, hs, as_, away, status)
+                        else:
+                            cur.execute("""
+                                UPDATE predictions
+                                SET result_status='LIVE', match_status='LIVE',
+                                    live_home_score=%s, live_away_score=%s,
+                                    live_minute=%s
+                                WHERE match_id=%s
+                            """, (hs, as_, minute, mid))
+                            _log.info('LIVE %s %d-%d %s (%s)', home, hs, as_, away, minute)
+                    else:
+                        # ESPN not tracking it — try TSDB for any past-window match
+                        try:
+                            kickoff = (datetime.fromisoformat(kickoff_str.replace('Z', '+00:00'))
+                                       if kickoff_str
+                                       else datetime.fromisoformat(f'{match_date}T23:00:00+00:00'))
+                        except Exception:
+                            continue
+                        if kickoff + timedelta(hours=2) > now:
+                            continue
+                        result = _fetch_tsdb_result(home or '', away or '', match_date or '')
+                        if result:
+                            hs, as_ = result
+                            status = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                            cur.execute("""
+                                UPDATE predictions
+                                SET actual_home_score=%s, actual_away_score=%s,
+                                    result_status=%s, match_status='FINISHED'
+                                WHERE match_id=%s
+                            """, (hs, as_, status, mid))
+                            _log.info('TSDB result %s %d-%d %s → %s',
+                                      home, hs, as_, away, status)
+                return
+    except Exception as e:
+        _log.warning('DB live update failed, falling back: %s', e)
+
+    _check_pending_results()
+
+
 WC_FIXTURES_RAW = [
     # All times UTC.  EDT = UTC-4 in June.  Midnight-crossover dates adjusted.
     # Sources: ESPN + NBC Sports official schedule (verified Jun 2026).
@@ -1250,6 +1376,28 @@ def results_history():
     })
 
 
+@app.route('/api/live-scores')
+def live_scores():
+    """Return all currently LIVE predictions keyed by match_id."""
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    SELECT match_id, home_team, away_team,
+                           live_home_score, live_away_score, live_minute
+                    FROM predictions WHERE result_status = 'LIVE'
+                """)
+                cols = [d[0] for d in cur.description]
+                live = {
+                    row[0]: dict(zip(cols, row))
+                    for row in cur.fetchall()
+                }
+                return jsonify({'live': live})
+    except Exception as e:
+        _log.warning('live-scores endpoint: %s', e)
+    return jsonify({'live': {}})
+
+
 # ── Serve React build ─────────────────────────────────────────────────────────
 
 DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
@@ -1273,16 +1421,16 @@ def serve(path):
     return send_from_directory(DIST, 'index.html')
 
 
-# ── APScheduler — result checker every 30 minutes ────────────────────────────
+# ── APScheduler — live score + result checker every 2 minutes ────────────────
 try:
     from apscheduler.schedulers.background import BackgroundScheduler as _BgSched
     _scheduler = _BgSched(daemon=True)
-    _scheduler.add_job(_check_pending_results, 'interval', minutes=30,
-                       id='result_checker', misfire_grace_time=120)
+    _scheduler.add_job(_update_live_scores, 'interval', minutes=2,
+                       id='live_checker', misfire_grace_time=60)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
-    _log.info('APScheduler started — checking results every 30 min')
+    _log.info('APScheduler started — live update every 2 min')
 except Exception as _sch_err:
     _log.warning('APScheduler not available: %s', _sch_err)
 

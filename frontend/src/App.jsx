@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 import ResultsSection from './components/ResultsSection.jsx'
+import { LiveScoresContext } from './contexts/LiveScoresContext.jsx'
 
 const LogoIcon = () => (
   <svg viewBox="0 0 24 16" fill="none">
@@ -41,7 +42,7 @@ function Header({ active, setActive }) {
       </div>
 
       <nav className="header-nav">
-        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['intl','Live Internationals'],['club','Club Tips'],['results','Results']].map(([id, label]) => (
+        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['intl','Live Internationals'],['club','Club Tips'],['history','History']].map(([id, label]) => (
           <button
             key={id}
             className={`nav-btn${active === id ? ' active' : ''}`}
@@ -102,9 +103,22 @@ function Hero({ onDailyTips, onWC, onIntl, onClub }) {
 
 export default function App() {
   const [active, setActive] = useState('daily-tips')
+  const [liveScores, setLiveScores] = useState({})
   const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 
+  useEffect(() => {
+    const poll = () =>
+      fetch('/api/live-scores')
+        .then(r => r.json())
+        .then(d => setLiveScores(d.live || {}))
+        .catch(() => {})
+    poll()
+    const t = setInterval(poll, 60_000)
+    return () => clearInterval(t)
+  }, [])
+
   return (
+    <LiveScoresContext.Provider value={liveScores}>
     <div className="app">
       <Header active={active} setActive={setActive} />
 
@@ -134,5 +148,6 @@ export default function App() {
         Please gamble responsibly. 18+
       </footer>
     </div>
+    </LiveScoresContext.Provider>
   )
 }

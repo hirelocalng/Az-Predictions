@@ -81,7 +81,7 @@ export default function ResultsSection() {
     : null
 
   return (
-    <section className="section" id="results">
+    <section className="section" id="history">
       <div className="section-header">
         <div className="section-label">Track Record</div>
         <h2 className="section-title">
@@ -138,7 +138,7 @@ export default function ResultsSection() {
       )}
 
       <p className="footer-text">
-        Results fetched automatically from TheSportsDB · Updated every 30 minutes
+        Results fetched automatically from TheSportsDB &amp; ESPN · Live updates every 2 minutes
       </p>
     </section>
   )

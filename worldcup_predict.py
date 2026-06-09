@@ -135,6 +135,9 @@ def load_data():
     df['date'] = pd.to_datetime(df['date'])
     df = df.dropna(subset=['home_score', 'away_score'])
     df = df.sort_values('date').reset_index(drop=True)
+    # Pre-compute once so get_major_form can use a vectorised filter instead of
+    # calling apply(get_importance) across 49k rows on every team lookup.
+    df['_importance'] = df['tournament'].apply(get_importance)
     return df
 
 
@@ -218,9 +221,10 @@ def get_team_form(df, team, n=FORM_WINDOW):
 
 def get_major_form(df, team, n=10, importance_threshold=0.70):
     """Form stats restricted to high-importance matches only."""
+    imp_col = df['_importance'] if '_importance' in df.columns else df['tournament'].apply(get_importance)
     mask = (
         ((df['home_team'] == team) | (df['away_team'] == team)) &
-        (df['tournament'].apply(get_importance) >= importance_threshold)
+        (imp_col >= importance_threshold)
     )
     matches = df[mask].sort_values('date').tail(n)
 
@@ -369,47 +373,30 @@ def print_h2h_summary(df, team_a, team_b, n=10):
 # --- Main ---------------------------------------------------------------------
 
 def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'):
-    # Load
-    result_model, res_features, goals_model, goals_features = load_models()
-    df = load_data()
-    all_teams = sorted(set(df['home_team'].tolist() + df['away_team'].tolist()))
-
-    # Handle --list flag
+    # Handle --list flag (needs raw data, bypass predict_match)
     if team_a_raw == '--list':
+        df        = load_data()
+        all_teams = sorted(set(df['home_team'].tolist() + df['away_team'].tolist()))
         print('\n'.join(all_teams))
         return
 
-    team_a = resolve_team(team_a_raw, all_teams)
-    team_b = resolve_team(team_b_raw, all_teams)
+    # Delegate to predict_match so CLI and website use identical computation.
+    pred = predict_match(team_a_raw, team_b_raw,
+                         is_neutral=is_neutral, tournament=tournament)
 
-    importance = get_importance(tournament)
+    team_a    = pred['resolved_home']
+    team_b    = pred['resolved_away']
+    p_home_win = pred['home_win']
+    p_draw     = pred['draw']
+    p_away_win = pred['away_win']
+    p_over     = pred['over_goals']
+    p_under    = 1.0 - p_over
+    p_btts     = pred['btts']
 
-    # Compute features
+    # For expected goals display, load data from the cached DF if available
+    df = _PRED_DF if _PRED_DF is not None else load_data()
     home_form = get_team_form(df, team_a)
     away_form = get_team_form(df, team_b)
-    h2h       = get_h2h(df, team_a, team_b)
-
-    # Major-tournament form (merged into form dicts for build_feature_vector)
-    home_mf = get_major_form(df, team_a)
-    away_mf = get_major_form(df, team_b)
-    home_form.update(home_mf)
-    away_form.update(away_mf)
-
-    X = build_feature_vector(home_form, away_form, h2h, res_features,
-                             is_neutral=is_neutral,
-                             tournament_importance=importance)
-
-    # Predictions
-    res_proba   = result_model.predict_proba(X)[0]   # [away_win, draw, home_win]
-    goals_proba = goals_model.predict_proba(X)[0]    # [under, over]
-
-    p_home_win  = res_proba[2]
-    p_draw      = res_proba[1]
-    p_away_win  = res_proba[0]
-    p_over      = goals_proba[1]
-    p_under     = goals_proba[0]
-
-    # Expected goals (rough estimate from averages)
     exp_home_goals = (home_form['goals_scored'] + away_form['goals_conceded']) / 2
     exp_away_goals = (away_form['goals_scored'] + home_form['goals_conceded']) / 2
     exp_total      = exp_home_goals + exp_away_goals
@@ -420,7 +407,7 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     print(f'  MATCH PREDICTION')
     print(f'  {team_a}  vs  {team_b}')
     print(f'  Tournament : {tournament}')
-    print(f'  Venue      : {"Neutral" if is_neutral else f"{team_a} home"}')
+    print(f'  Venue      : {"Neutral (averaged)" if is_neutral else f"{team_a} home"}')
     print(sep)
 
     # Recent form
@@ -466,9 +453,7 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     print('  MARKET SUMMARY')
     print(f'  Match Result  -> {winner} ({top_prob:.1%})')
     print(f'  Goals O/U 2.5 -> {goals_call} ({max(p_over, p_under):.1%})')
-    both_teams = (home_form['goals_scored'] > 0.8 and away_form['goals_scored'] > 0.8)
-    btts = 'Yes' if both_teams else 'No'
-    print(f'  Both Teams Score (estimate) -> {btts}')
+    print(f'  Both Teams Score -> {p_btts:.1%}')
     print(f'{sep}\n')
 
 
@@ -496,11 +481,24 @@ def _api_corners_prob(home_gs: float, away_gs: float,
     return max(0.20, min(0.82, p))
 
 
+def _run_models(form_a, form_b, h2h_ab, res_features,
+                result_model, goals_model, is_neutral, importance):
+    """Run models for one specific team ordering; return (res_proba, goals_proba)."""
+    X = build_feature_vector(form_a, form_b, h2h_ab, res_features,
+                             is_neutral=is_neutral,
+                             tournament_importance=importance)
+    return (result_model.predict_proba(X)[0],   # [away_win, draw, home_win]
+            goals_model.predict_proba(X)[0])     # [under, over]
+
+
 def predict_match(home_raw, away_raw, is_neutral=True,
                   tournament='FIFA World Cup'):
     """
-    Programmatic version of predict() — identical feature engineering, same
-    model calls, same probabilities. Returns a dict instead of printing.
+    Return prediction dict for a match.  For neutral-venue matches the result
+    is averaged over both team orderings so the output is order-independent —
+    i.e. predict_match(A, B) == predict_match(B, A) with A/B results swapped.
+    This ensures the website (which gets home/away from the live-fixtures API)
+    and the CLI (where the user types teams) always agree.
 
     Models and data are loaded once and cached globally for API throughput.
 
@@ -508,10 +506,6 @@ def predict_match(home_raw, away_raw, is_neutral=True,
     -------
     dict  {home_win, draw, away_win, over_goals, btts, over_corners,
            resolved_home, resolved_away}
-
-    Raises
-    ------
-    ValueError  if either team name cannot be resolved from the dataset.
     """
     global _PRED_MODELS, _PRED_DF, _ALL_TEAMS
     if _PRED_MODELS is None:
@@ -531,29 +525,43 @@ def predict_match(home_raw, away_raw, is_neutral=True,
 
     importance = get_importance(tournament)
 
-    home_form = get_team_form(df, team_a)
-    away_form = get_team_form(df, team_b)
-    h2h       = get_h2h(df, team_a, team_b)
+    form_a = get_team_form(df, team_a)
+    form_b = get_team_form(df, team_b)
+    form_a.update(get_major_form(df, team_a))
+    form_b.update(get_major_form(df, team_b))
 
-    home_form.update(get_major_form(df, team_a))
-    away_form.update(get_major_form(df, team_b))
+    h2h_ab = get_h2h(df, team_a, team_b)
 
-    X = build_feature_vector(home_form, away_form, h2h, res_features,
-                             is_neutral=is_neutral,
-                             tournament_importance=importance)
-
-    res_proba   = result_model.predict_proba(X)[0]   # [away_win, draw, home_win]
-    goals_proba = goals_model.predict_proba(X)[0]    # [under, over]
+    if is_neutral:
+        # Average both orderings so the result doesn't depend on who is listed first.
+        # P(A wins) = avg(forward_home_win, reverse_away_win), etc.
+        h2h_ba = get_h2h(df, team_b, team_a)
+        res_fwd, goals_fwd = _run_models(form_a, form_b, h2h_ab, res_features,
+                                         result_model, goals_model, is_neutral, importance)
+        res_rev, goals_rev = _run_models(form_b, form_a, h2h_ba, res_features,
+                                         result_model, goals_model, is_neutral, importance)
+        # res_proba order: [away_win, draw, home_win]
+        p_home_win = (float(res_fwd[2]) + float(res_rev[0])) / 2
+        p_draw     = (float(res_fwd[1]) + float(res_rev[1])) / 2
+        p_away_win = (float(res_fwd[0]) + float(res_rev[2])) / 2
+        p_over     = (float(goals_fwd[1]) + float(goals_rev[1])) / 2
+    else:
+        res_proba, goals_proba = _run_models(form_a, form_b, h2h_ab, res_features,
+                                             result_model, goals_model, is_neutral, importance)
+        p_home_win = float(res_proba[2])
+        p_draw     = float(res_proba[1])
+        p_away_win = float(res_proba[0])
+        p_over     = float(goals_proba[1])
 
     return {
-        'home_win':      float(res_proba[2]),
-        'draw':          float(res_proba[1]),
-        'away_win':      float(res_proba[0]),
-        'over_goals':    float(goals_proba[1]),
-        'btts':          _api_btts_prob(home_form['goals_scored'], away_form['goals_scored']),
+        'home_win':      p_home_win,
+        'draw':          p_draw,
+        'away_win':      p_away_win,
+        'over_goals':    p_over,
+        'btts':          _api_btts_prob(form_a['goals_scored'], form_b['goals_scored']),
         'over_corners':  _api_corners_prob(
-                             home_form['goals_scored'], away_form['goals_scored'],
-                             home_form['goals_conceded'], away_form['goals_conceded']),
+                             form_a['goals_scored'], form_b['goals_scored'],
+                             form_a['goals_conceded'], form_b['goals_conceded']),
         'resolved_home': team_a,
         'resolved_away': team_b,
     }

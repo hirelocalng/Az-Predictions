@@ -1682,6 +1682,30 @@ def live_scores():
     return jsonify({'live': {}})
 
 
+# ── Health endpoint ───────────────────────────────────────────────────────────
+
+@app.route('/api/health')
+def health():
+    db_ok  = False
+    db_msg = 'DATABASE_URL not set'
+    if _DB_CONN_URL:
+        try:
+            with _db() as (conn, cur):
+                if conn:
+                    cur.execute('SELECT 1')
+                    db_ok  = True
+                    db_msg = 'connected'
+        except Exception as e:
+            db_msg = str(e)
+    return jsonify({
+        'status':       'ok',
+        'db':           db_ok,
+        'db_msg':       db_msg,
+        'db_url_set':   bool(_DB_CONN_URL),
+        'paystack_set': bool(_PAYSTACK_PUBLIC),
+    })
+
+
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
 @app.route('/api/auth/register', methods=['POST'])
@@ -1694,11 +1718,13 @@ def auth_register():
         return jsonify({'error': 'Name, email and password are required'}), 400
     if len(password) < 6:
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'Database not configured on server. Please contact support.'}), 503
     pw_hash = generate_password_hash(password)
     try:
         with _db() as (conn, cur):
             if conn is None:
-                return jsonify({'error': 'Database not available'}), 503
+                return jsonify({'error': 'Database not available — try again shortly'}), 503
             cur.execute('SELECT id FROM users WHERE email=%s', (email,))
             if cur.fetchone():
                 return jsonify({'error': 'Email already registered'}), 409
@@ -1727,10 +1753,12 @@ def auth_login():
     password = data.get('password', '')
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'Database not configured on server. Please contact support.'}), 503
     try:
         with _db() as (conn, cur):
             if conn is None:
-                return jsonify({'error': 'Database not available'}), 503
+                return jsonify({'error': 'Database not available — try again shortly'}), 503
             cur.execute(
                 'SELECT id,name,email,password_hash,is_premium FROM users WHERE email=%s',
                 (email,)

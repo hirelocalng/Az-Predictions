@@ -715,7 +715,14 @@ def predict_match(home_raw, away_raw, is_neutral=True,
 # ── Fetch fixtures helpers ────────────────────────────────────────────────────
 
 sys.path.insert(0, os.path.dirname(__file__))
-from fetch_fixtures import get_daily_tips, get_club_tips, get_intl_tips
+try:
+    from fetch_fixtures import get_daily_tips, get_club_tips, get_intl_tips
+    print('fetch_fixtures imported OK', flush=True)
+except Exception as _ff_err:
+    print(f'WARNING: fetch_fixtures import failed: {_ff_err}', flush=True)
+    def get_daily_tips(*a, **kw): return []
+    def get_club_tips(*a, **kw):  return []
+    def get_intl_tips(*a, **kw):  return []
 
 # ── Club feature builder ──────────────────────────────────────────────────────
 # BASE_FEATURES order must match train.py exactly.

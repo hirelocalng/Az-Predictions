@@ -318,6 +318,63 @@ def _get_current_user():
         return None
 
 
+def _migrate_json_to_db():
+    """
+    On startup, push any predictions from prediction_history.json into PostgreSQL.
+    Uses INSERT ... ON CONFLICT DO UPDATE so that if a JSON record is already WON/LOST
+    it overwrites a stale PENDING row in the DB (handles the case where DB was broken
+    when the result arrived and only JSON got updated).
+    """
+    if not _DB_CONN_URL:
+        return
+    try:
+        with _HISTORY_LOCK:
+            data = _read_raw_history()
+        preds = data.get('predictions', [])
+        if not preds:
+            print('DB migration: prediction_history.json is empty — nothing to sync', flush=True)
+            return
+        synced = 0
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            for p in preds:
+                mid = p.get('match_id')
+                if not mid:
+                    continue
+                try:
+                    cur.execute("""
+                        INSERT INTO predictions
+                            (match_id, home_team, away_team, match_date, match_time,
+                             competition, predicted_winner, predicted_goals,
+                             predicted_btts, predicted_corners,
+                             actual_home_score, actual_away_score,
+                             result_status, kickoff_utc)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        ON CONFLICT (match_id) DO UPDATE
+                            SET result_status     = EXCLUDED.result_status,
+                                actual_home_score = EXCLUDED.actual_home_score,
+                                actual_away_score = EXCLUDED.actual_away_score
+                            WHERE predictions.result_status IN ('PENDING','LIVE')
+                              AND EXCLUDED.result_status IN ('WON','LOST')
+                    """, (
+                        mid,
+                        p.get('home_team'), p.get('away_team'),
+                        p.get('match_date'), p.get('match_time'),
+                        p.get('competition', 'Football'),
+                        p.get('predicted_winner'), p.get('predicted_goals'),
+                        p.get('predicted_btts'), p.get('predicted_corners'),
+                        p.get('actual_home_score'), p.get('actual_away_score'),
+                        p.get('result_status', 'PENDING'), p.get('kickoff_utc'),
+                    ))
+                    synced += 1
+                except Exception as exc:
+                    _log.warning('migrate: skip %s — %s', mid, exc)
+        print(f'DB migration: {synced}/{len(preds)} JSON predictions synced to DB ✓', flush=True)
+    except Exception as exc:
+        print(f'DB migration error: {exc}', flush=True)
+
+
 # ── International prediction — copied verbatim from worldcup_predict.py ───────
 # Every constant, every helper, every formula is identical to the terminal tool.
 
@@ -752,14 +809,29 @@ def _fetch_tsdb_result(home_team, away_team, match_date):
 
 
 def _resolve_result(pw, home, away, hs, as_):
-    """Return 'WON' or 'LOST' based on predicted winner vs actual score."""
-    pw_l, home_l, away_l = pw.lower(), home.lower(), away.lower()
+    """Return 'WON' or 'LOST' for any bet type given actual score."""
+    if not pw:
+        return 'LOST'
+    pw_l  = pw.lower()
+    total = hs + as_
+
+    # Goals Over/Under (e.g. "Over 2.5 Goals", "Under 2.5 Goals")
+    if 'goal' in pw_l:
+        over   = 'over' in pw_l
+        thresh = 3.5 if '3.5' in pw_l else 2.5
+        return 'WON' if (over and total > thresh) or (not over and total <= thresh) else 'LOST'
+
+    # Corners — can't determine from score alone; mark LOST to avoid inflating win rate
+    if 'corner' in pw_l:
+        return 'LOST'
+
+    # Match result
+    home_l, away_l = home.lower(), away.lower()
     if hs > as_:
         return 'WON' if home_l in pw_l else 'LOST'
     elif as_ > hs:
         return 'WON' if away_l in pw_l else 'LOST'
-    else:
-        return 'WON' if 'draw' in pw_l else 'LOST'
+    return 'WON' if 'draw' in pw_l else 'LOST'
 
 
 def _check_pending_results():
@@ -1242,6 +1314,7 @@ def _build_wc_fixtures():
 
 
 _init_db()
+_migrate_json_to_db()
 print("Loading predictions…", flush=True)
 _WC_FIXTURES = _build_wc_fixtures()
 print(f"  WC fixtures ready ({len(_WC_FIXTURES)} matches)", flush=True)

@@ -83,18 +83,26 @@ def _db():
         return
     conn = cur = None
     try:
-        import psycopg
-        conn = psycopg.connect(_DB_CONN_URL)
+        import psycopg  # psycopg3 — bundled binary, no system libpq needed
+        conn = psycopg.connect(_DB_CONN_URL, autocommit=False)
         cur  = conn.cursor()
         yield conn, cur
         conn.commit()
     except Exception:
-        if conn:
-            conn.rollback()
+        try:
+            if conn: conn.rollback()
+        except Exception:
+            pass
         raise
     finally:
-        if cur:  cur.close()
-        if conn: conn.close()
+        try:
+            if cur:  cur.close()
+        except Exception:
+            pass
+        try:
+            if conn: conn.close()
+        except Exception:
+            pass
 
 
 def _init_db():
@@ -1313,11 +1321,23 @@ def _build_wc_fixtures():
     return fixtures
 
 
-_init_db()
-_migrate_json_to_db()
-print("Loading predictions…", flush=True)
-_WC_FIXTURES = _build_wc_fixtures()
-print(f"  WC fixtures ready ({len(_WC_FIXTURES)} matches)", flush=True)
+try:
+    _init_db()
+except Exception as _e:
+    print(f'WARNING: _init_db failed: {_e}', flush=True)
+
+try:
+    _migrate_json_to_db()
+except Exception as _e:
+    print(f'WARNING: _migrate_json_to_db failed: {_e}', flush=True)
+
+print("Loading WC predictions…", flush=True)
+try:
+    _WC_FIXTURES = _build_wc_fixtures()
+    print(f"  WC fixtures ready ({len(_WC_FIXTURES)} matches)", flush=True)
+except Exception as _e:
+    print(f'WARNING: _build_wc_fixtures failed: {_e}', flush=True)
+    _WC_FIXTURES = []
 
 # ── API routes ────────────────────────────────────────────────────────────────
 
@@ -1719,20 +1739,23 @@ def auth_register():
     if len(password) < 6:
         return jsonify({'error': 'Password must be at least 6 characters'}), 400
     if not _DB_CONN_URL:
-        return jsonify({'error': 'Database not configured on server. Please contact support.'}), 503
+        return jsonify({'error': 'Server database is not configured — contact support'}), 503
     pw_hash = generate_password_hash(password)
+    token   = None
+    user_id = None
     try:
         with _db() as (conn, cur):
             if conn is None:
-                return jsonify({'error': 'Database not available — try again shortly'}), 503
+                return jsonify({'error': 'Could not connect to database — try again in a moment'}), 503
             cur.execute('SELECT id FROM users WHERE email=%s', (email,))
             if cur.fetchone():
-                return jsonify({'error': 'Email already registered'}), 409
+                return jsonify({'error': 'An account with that email already exists'}), 409
             cur.execute(
                 'INSERT INTO users (name,email,password_hash) VALUES (%s,%s,%s) RETURNING id',
                 (name, email, pw_hash)
             )
-            user_id = cur.fetchone()[0]
+            row = cur.fetchone()
+            user_id = row[0]
             token   = secrets.token_hex(32)
             expires = datetime.now(timezone.utc) + timedelta(days=30)
             cur.execute(
@@ -1743,9 +1766,9 @@ def auth_register():
                         'user':  {'id': user_id, 'name': name,
                                   'email': email, 'is_premium': False}}), 201
     except Exception as e:
-        msg = str(e) or repr(e)
-        print(f'auth_register error: {msg}', flush=True)
-        return jsonify({'error': msg or 'Registration failed — server error'}), 500
+        msg = str(e) or repr(e) or 'Unknown server error'
+        print(f'auth_register error: {type(e).__name__}: {msg}', flush=True)
+        return jsonify({'error': f'Registration error: {msg}'}), 500
 
 
 @app.route('/api/auth/login', methods=['POST'])
@@ -1756,11 +1779,11 @@ def auth_login():
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
     if not _DB_CONN_URL:
-        return jsonify({'error': 'Database not configured on server. Please contact support.'}), 503
+        return jsonify({'error': 'Server database is not configured — contact support'}), 503
     try:
         with _db() as (conn, cur):
             if conn is None:
-                return jsonify({'error': 'Database not available — try again shortly'}), 503
+                return jsonify({'error': 'Could not connect to database — try again in a moment'}), 503
             cur.execute(
                 'SELECT id,name,email,password_hash,is_premium FROM users WHERE email=%s',
                 (email,)
@@ -1779,9 +1802,9 @@ def auth_login():
                         'user':  {'id': uid, 'name': uname,
                                   'email': uemail, 'is_premium': bool(is_prem)}})
     except Exception as e:
-        msg = str(e) or repr(e)
-        print(f'auth_login error: {msg}', flush=True)
-        return jsonify({'error': msg or 'Login failed — server error'}), 500
+        msg = str(e) or repr(e) or 'Unknown server error'
+        print(f'auth_login error: {type(e).__name__}: {msg}', flush=True)
+        return jsonify({'error': f'Login error: {msg}'}), 500
 
 
 @app.route('/api/auth/me')

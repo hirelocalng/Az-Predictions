@@ -3,11 +3,11 @@ import { useState, useEffect } from 'react'
 const PLANS = [
   {
     id: 'monthly', name: 'Monthly', price: '₦5,000', usd: '≈ $5 / month',
-    amount: 500000, desc: 'Full access for 1 month',
+    desc: 'Full access for 1 month',
   },
   {
     id: '3month', name: '3 Months', price: '₦15,000', usd: '≈ $12 total · save 20%',
-    amount: 1500000, desc: 'Best value — pay once, enjoy 3 months', popular: true,
+    desc: 'Best value — pay once, enjoy 3 months', popular: true,
   },
 ]
 
@@ -31,13 +31,11 @@ function AuthHeader({ navigate }) {
 
 export default function SubscribePage({ navigate, auth, onAuth }) {
   const [paying, setPaying]   = useState(null)
-  const [pKey, setPKey]       = useState('')
   const [message, setMessage] = useState('')
   const [msgOk, setMsgOk]     = useState(false)
 
   useEffect(() => {
-    fetch('/api/config').then(r => r.json()).then(d => setPKey(d.paystack_public_key || '')).catch(() => {})
-    // Handle Paystack redirect callback
+    // Korapay redirects back to /subscribe?reference=... after checkout
     const params = new URLSearchParams(window.location.search)
     const ref = params.get('reference') || params.get('trxref')
     if (ref && auth?.token) verifyPayment(ref)
@@ -54,6 +52,8 @@ export default function SubscribePage({ navigate, auth, onAuth }) {
         onAuth({ ...auth, user: data.user })
         setMessage('🎉 Payment successful! Welcome to Premium.')
         setMsgOk(true)
+        // Clean the reference from the URL without a reload
+        window.history.replaceState({}, '', '/subscribe')
         setTimeout(() => navigate('/'), 2500)
       } else {
         setMessage(data.error || 'Payment could not be verified.')
@@ -61,24 +61,30 @@ export default function SubscribePage({ navigate, auth, onAuth }) {
     } catch { setMessage('Verification error — please contact support.') }
   }
 
-  const pay = plan => {
+  const pay = async plan => {
     if (!auth) { navigate('/login'); return }
-    if (!pKey || !window.PaystackPop) {
-      setMessage('Payment system unavailable. Contact support.')
-      return
-    }
     setPaying(plan.id)
-    const ref = `azpred_${auth.user.id}_${Date.now()}`
-    const handler = window.PaystackPop.setup({
-      key: pKey,
-      email: auth.user.email,
-      amount: plan.amount,
-      currency: 'NGN',
-      ref,
-      onSuccess: tx => { setPaying(null); verifyPayment(tx.reference) },
-      onCancel:  () => setPaying(null),
-    })
-    handler.openIframe()
+    setMessage('')
+    try {
+      const r = await fetch('/api/payment/initialize', {
+        method:  'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${auth.token}`,
+        },
+        body: JSON.stringify({ plan: plan.id }),
+      })
+      const data = await r.json()
+      if (data.checkout_url) {
+        window.location.href = data.checkout_url
+      } else {
+        setMessage(data.error || 'Could not start payment. Please try again.')
+        setPaying(null)
+      }
+    } catch {
+      setMessage('Payment system unavailable. Contact support.')
+      setPaying(null)
+    }
   }
 
   if (auth?.user?.is_premium) {
@@ -132,7 +138,7 @@ export default function SubscribePage({ navigate, auth, onAuth }) {
                 onClick={() => pay(plan)}
                 disabled={paying === plan.id}
               >
-                {paying === plan.id ? 'Opening…' : `Pay ${plan.price}`}
+                {paying === plan.id ? 'Redirecting…' : `Pay ${plan.price}`}
               </button>
             </div>
           ))}
@@ -145,7 +151,7 @@ export default function SubscribePage({ navigate, auth, onAuth }) {
           </p>
         )}
         <p style={{ textAlign:'center', marginTop:32, fontSize:'0.68rem', color:'var(--text-subtle)' }}>
-          Secured by Paystack · Nigerian payments (NGN) · Cancel anytime
+          Secured by Korapay · Nigerian payments (NGN) · Cancel anytime
         </p>
       </div>
     </div>

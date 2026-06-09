@@ -53,10 +53,10 @@ RES_ENCODER = club_result['result_encoder'] if club_result else None
 # ── Prediction history (PostgreSQL primary, JSON fallback) ────────────────────
 
 _HISTORY_PATH = os.path.join(_BASE_DIR, 'prediction_history.json')
-_HISTORY_LOCK = threading.Lock()
-_DB_URL       = os.environ.get('DATABASE_URL', '')
-_PAYSTACK_SECRET = os.environ.get('PAYSTACK_SECRET_KEY', '')
-_PAYSTACK_PUBLIC = os.environ.get('PAYSTACK_PUBLIC_KEY', '')
+_HISTORY_LOCK   = threading.Lock()
+_DB_URL         = os.environ.get('DATABASE_URL', '')
+_KORAPAY_SECRET = os.environ.get('KORAPAY_SECRET_KEY', '')
+_KORAPAY_PUBLIC = os.environ.get('KORAPAY_PUBLIC_KEY', '')
 
 
 def _build_db_url():
@@ -1743,7 +1743,7 @@ def health():
         'db':           db_ok,
         'db_msg':       db_msg,
         'db_url_set':   bool(_DB_CONN_URL),
-        'paystack_set': bool(_PAYSTACK_PUBLIC),
+        'korapay_set':  bool(_KORAPAY_PUBLIC),
     })
 
 
@@ -1836,7 +1836,61 @@ def auth_me():
     return jsonify({'user': user})
 
 
-# ── Payment endpoints ─────────────────────────────────────────────────────────
+# ── Payment endpoints (Korapay) ───────────────────────────────────────────────
+
+_KORA_INIT_URL   = 'https://api.korapay.com/merchant/api/v1/charges/initialize'
+_KORA_VERIFY_URL = 'https://api.korapay.com/merchant/api/v1/charges/{reference}'
+
+# Amount thresholds in Naira
+_PLAN_AMOUNTS = {
+    'monthly': 5_000,
+    '3month':  15_000,
+}
+
+
+@app.route('/api/payment/initialize', methods=['POST'])
+def payment_initialize():
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    if not _KORAPAY_SECRET:
+        return jsonify({'error': 'Payment not configured'}), 503
+    body   = request.get_json(silent=True) or {}
+    plan   = body.get('plan', 'monthly')
+    amount = _PLAN_AMOUNTS.get(plan, _PLAN_AMOUNTS['monthly'])
+    ref    = f"azpred_{user['id']}_{secrets.token_hex(8)}"
+    # Build redirect URL back to /subscribe so the callback is caught by React
+    base        = request.host_url.rstrip('/')
+    redirect_url = f"{base}/subscribe"
+    import requests as _req
+    try:
+        r = _req.post(
+            _KORA_INIT_URL,
+            json={
+                'amount':       amount,
+                'currency':     'NGN',
+                'reference':    ref,
+                'redirect_url': redirect_url,
+                'customer':     {'email': user['email']},
+                'channels':     ['card', 'bank_transfer'],
+                'metadata':     {'plan': plan, 'user_id': user['id']},
+            },
+            headers={
+                'Authorization': f'Bearer {_KORAPAY_SECRET}',
+                'Content-Type':  'application/json',
+            },
+            timeout=15,
+        )
+        if r.status_code not in (200, 201):
+            return jsonify({'error': 'Korapay initialization failed', 'detail': r.text}), 502
+        data = r.json().get('data', {})
+        checkout_url = data.get('checkout_url') or data.get('authorization_url')
+        if not checkout_url:
+            return jsonify({'error': 'No checkout URL returned by Korapay'}), 502
+        return jsonify({'checkout_url': checkout_url, 'reference': ref})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/payment/verify')
 def payment_verify():
@@ -1846,24 +1900,24 @@ def payment_verify():
     reference = request.args.get('reference', '')
     if not reference:
         return jsonify({'error': 'Reference required'}), 400
-    if not _PAYSTACK_SECRET:
+    if not _KORAPAY_SECRET:
         return jsonify({'error': 'Payment not configured'}), 503
     import requests as _req
     try:
         r = _req.get(
-            f'https://api.paystack.co/transaction/verify/{reference}',
-            headers={'Authorization': f'Bearer {_PAYSTACK_SECRET}'},
+            _KORA_VERIFY_URL.format(reference=reference),
+            headers={'Authorization': f'Bearer {_KORAPAY_SECRET}'},
             timeout=10,
         )
         if r.status_code != 200:
-            return jsonify({'error': 'Paystack verification failed'}), 502
-        ps  = r.json().get('data', {})
-        if ps.get('status') != 'success':
-            return jsonify({'error': 'Payment not successful'}), 400
-        amount = ps.get('amount', 0)          # kobo
-        months = 3 if amount >= 1_400_000 else 1
-        now_u  = datetime.now(timezone.utc)
-        expires = now_u + timedelta(days=30 * months)
+            return jsonify({'error': 'Korapay verification failed', 'detail': r.text}), 502
+        data = r.json().get('data', {})
+        if data.get('status') != 'success':
+            return jsonify({'error': 'Payment not successful', 'status': data.get('status')}), 400
+        amount  = data.get('amount', 0)           # Naira
+        days    = 90 if amount >= 14_000 else 30
+        now_u   = datetime.now(timezone.utc)
+        expires = now_u + timedelta(days=days)
         with _db() as (conn, cur):
             if conn is None:
                 return jsonify({'error': 'DB unavailable'}), 503
@@ -1871,7 +1925,6 @@ def payment_verify():
                 'UPDATE users SET is_premium=TRUE,premium_until=%s WHERE id=%s',
                 (expires, user['id'])
             )
-        # Return refreshed user
         updated = _get_current_user()
         return jsonify({'success': True, 'user': updated or user})
     except Exception as e:
@@ -1880,7 +1933,7 @@ def payment_verify():
 
 @app.route('/api/config')
 def app_config():
-    return jsonify({'paystack_public_key': _PAYSTACK_PUBLIC})
+    return jsonify({'korapay_public_key': _KORAPAY_PUBLIC})
 
 
 # ── Serve React build ─────────────────────────────────────────────────────────

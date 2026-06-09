@@ -66,9 +66,10 @@ function Skeleton() {
 }
 
 export default function ResultsSection() {
-  const [data, setData]     = useState(null)
-  const [error, setError]   = useState(null)
+  const [data, setData]       = useState(null)
+  const [error, setError]     = useState(null)
   const [loading, setLoading] = useState(true)
+  const [showList, setShowList] = useState(false)
 
   useEffect(() => {
     fetch('/api/results')
@@ -134,8 +135,18 @@ export default function ResultsSection() {
         </div>
       )}
 
+      {/* Mobile toggle button — only visible on small screens */}
+      {!loading && !error && preds.length > 0 && (
+        <button
+          className="res-mobile-toggle"
+          onClick={() => setShowList(v => !v)}
+        >
+          {showList ? 'Hide predictions ▲' : `View ${preds.length} predictions ▼`}
+        </button>
+      )}
+
       {!loading && preds.length > 0 && (
-        <div className="res-list">
+        <div className={`res-list${showList ? ' res-list-open' : ''}`}>
           {preds.map(p => <ResultRow key={p.match_id} pred={p} />)}
         </div>
       )}

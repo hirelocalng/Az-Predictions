@@ -2,6 +2,11 @@ import { useState, useEffect } from 'react'
 import PremiumGate from './PremiumGate.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 
+const isFinished = utc_kickoff =>
+  utc_kickoff
+    ? Date.now() > new Date(utc_kickoff).getTime() + 2 * 60 * 60 * 1000
+    : false
+
 export default function BestBetSection() {
   const { auth }   = useAuth()
   const isPremium  = Boolean(auth?.user?.is_premium)
@@ -15,6 +20,13 @@ export default function BestBetSection() {
       .catch(() => setLoading(false))
   }, [])
 
+  const bestBet  = data?.best_bet
+  const bestDone = bestBet && isFinished(bestBet.utc_kickoff)
+
+  // Filter accumulator picks whose match hasn't finished yet
+  const acca = (data?.accumulator || []).filter(p => !isFinished(p.utc_kickoff))
+  const combinedProb = acca.reduce((acc, p) => acc * p.prob, 1.0)
+
   return (
     <section className="section" id="best-bet">
       {/* ── Best Bet (FREE) ─────────────────────────────────────────────── */}
@@ -27,26 +39,28 @@ export default function BestBetSection() {
         <div className="skeleton" style={{ height: 180, borderRadius: 20, maxWidth: 700, margin: '0 auto' }} />
       )}
 
-      {!loading && !data?.best_bet && (
+      {!loading && (!bestBet || bestDone) && (
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
-          No fixtures analysed yet — check back soon.
+          {bestDone
+            ? "Today's best pick has finished. Come back tomorrow for new picks."
+            : 'No fixtures analysed yet — check back soon.'}
         </p>
       )}
 
-      {!loading && data?.best_bet && (
+      {!loading && bestBet && !bestDone && (
         <div className="best-bet-card">
           <div className="bb-star-badge">⭐ BEST BET</div>
           <div className="bb-body">
             <div className="bb-left">
-              <div className="bb-league">{data.best_bet.league || 'Football'}</div>
-              <div className="bb-match">{data.best_bet.match}</div>
-              <div className="bb-pick">{data.best_bet.pick}</div>
+              <div className="bb-league">{bestBet.league || 'Football'}</div>
+              <div className="bb-match">{bestBet.match}</div>
+              <div className="bb-pick">{bestBet.pick}</div>
             </div>
             <div className="bb-right">
               <div className="bb-conf-label">Confidence</div>
-              <div className="bb-conf-num">{(data.best_bet.prob * 100).toFixed(1)}%</div>
+              <div className="bb-conf-num">{(bestBet.prob * 100).toFixed(1)}%</div>
               <div className="bb-conf-bar">
-                <div className="bb-conf-fill" style={{ width: `${Math.round(data.best_bet.prob * 100)}%` }} />
+                <div className="bb-conf-fill" style={{ width: `${Math.round(bestBet.prob * 100)}%` }} />
               </div>
             </div>
           </div>
@@ -67,11 +81,13 @@ export default function BestBetSection() {
         ? <PremiumGate />
         : loading
           ? <div className="skeleton" style={{ height: 220, borderRadius: 16, maxWidth: 700, margin: '0 auto' }} />
-          : !data?.accumulator?.length
-            ? <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 0' }}>No accumulator available today.</p>
+          : acca.length === 0
+            ? <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 0' }}>
+                No accumulator picks remaining today.
+              </p>
             : (
               <div className="acca-card">
-                {data.accumulator.map((pick, i) => (
+                {acca.map((pick, i) => (
                   <div key={i} className="acca-row">
                     <div className="acca-num">{i + 1}</div>
                     <div className="acca-details">
@@ -84,7 +100,7 @@ export default function BestBetSection() {
                 ))}
                 <div className="acca-combined">
                   <span className="acca-combined-label">Combined confidence</span>
-                  <span className="acca-combined-num">{(data.combined_prob * 100).toFixed(1)}%</span>
+                  <span className="acca-combined-num">{(combinedProb * 100).toFixed(1)}%</span>
                 </div>
               </div>
             )

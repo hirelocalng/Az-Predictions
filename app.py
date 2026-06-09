@@ -816,6 +816,9 @@ def _get_result(home_team, away_team, match_date):
     r = _fetch_fd_result(home_team, away_team, match_date)
     if r:
         return r
+    r = _fetch_espn_result(home_team, away_team)
+    if r:
+        return r
     return None
 
 
@@ -952,7 +955,7 @@ def _fetch_espn_events():
             for ev in (r.json().get('events') or []):
                 comp = (ev.get('competitions') or [{}])[0]
                 sname = (comp.get('status') or {}).get('type', {}).get('name', '')
-                if sname not in ('STATUS_IN_PROGRESS', 'STATUS_HALFTIME', 'STATUS_FINAL'):
+                if sname not in _ESPN_ACTIVE:
                     continue
                 competitors = comp.get('competitors') or []
                 hc = next((c for c in competitors if c.get('homeAway') == 'home'), None)
@@ -981,6 +984,24 @@ def _espn_match(espn, home_pred, away_pred):
             return ev
         if _team_similar(eh, away_pred) and _team_similar(ea, home_pred):
             return {**ev, 'home_score': ev['away_score'], 'away_score': ev['home_score']}
+    return None
+
+
+_ESPN_ACTIVE = frozenset({
+    'STATUS_IN_PROGRESS', 'STATUS_HALFTIME', 'STATUS_SECOND_HALF',
+    'STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FULL_ET', 'STATUS_FULL_PEN',
+})
+_ESPN_DONE = frozenset({
+    'STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FULL_ET', 'STATUS_FULL_PEN',
+})
+
+
+def _fetch_espn_result(home_team, away_team):
+    """Return (home_score, away_score) from ESPN if match is fully finished, else None."""
+    espn = _fetch_espn_events()
+    ev   = _espn_match(espn, home_team, away_team)
+    if ev and ev.get('espn_status') in _ESPN_DONE:
+        return ev['home_score'], ev['away_score']
     return None
 
 

@@ -3,7 +3,10 @@ import { useState } from 'react'
 function AuthHeader({ navigate }) {
   return (
     <header className="auth-header">
-      <button className="auth-back" onClick={() => navigate('/')}>← Back</button>
+      <button className="auth-back" onClick={() => navigate('/')}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        Back
+      </button>
       <div className="auth-logo">⚽ Az-Predictions</div>
     </header>
   )
@@ -38,24 +41,25 @@ export default function LoginPage({ navigate, onAuth }) {
       <AuthHeader navigate={navigate} />
       <div className="auth-card">
         <h2 className="auth-title">Welcome back</h2>
-        <p className="auth-sub">Log in to access your predictions</p>
+        <p className="auth-sub">Sign in to access your predictions</p>
         <form onSubmit={submit} className="auth-form">
           <div className="field">
             <label>Email</label>
-            <input type="email" value={form.email} onChange={set('email')} required placeholder="you@email.com" />
+            <input type="email" value={form.email} onChange={set('email')} required placeholder="you@email.com" autoFocus />
           </div>
           <div className="field">
             <label>Password</label>
-            <input type="password" value={form.password} onChange={set('password')} required placeholder="••••••••" />
+            <input type="password" value={form.password} onChange={set('password')} required placeholder="Your password" />
           </div>
-          {error && <div className="auth-error">{error}</div>}
+          {error && <div className="auth-error">⚠ {error}</div>}
           <button type="submit" className="btn-primary btn-full" disabled={loading}>
-            {loading ? 'Logging in…' : 'Log in'}
+            {loading ? <span className="btn-spinner" /> : null}
+            {loading ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
         <p className="auth-switch">
           No account?{' '}
-          <button className="auth-link" onClick={() => navigate('/register')}>Sign up free</button>
+          <button className="auth-link" onClick={() => navigate('/register')}>Create one free</button>
         </p>
       </div>
     </div>

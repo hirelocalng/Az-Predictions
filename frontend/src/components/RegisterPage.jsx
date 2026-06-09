@@ -3,7 +3,10 @@ import { useState } from 'react'
 function AuthHeader({ navigate }) {
   return (
     <header className="auth-header">
-      <button className="auth-back" onClick={() => navigate('/')}>← Back</button>
+      <button className="auth-back" onClick={() => navigate('/')}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        Back
+      </button>
       <div className="auth-logo">⚽ Az-Predictions</div>
     </header>
   )
@@ -39,12 +42,12 @@ export default function RegisterPage({ navigate, onAuth }) {
     <div className="auth-page">
       <AuthHeader navigate={navigate} />
       <div className="auth-card">
-        <h2 className="auth-title">Create your account</h2>
-        <p className="auth-sub">Get 5 free daily picks. Upgrade for unlimited access.</p>
+        <h2 className="auth-title">Create account</h2>
+        <p className="auth-sub">Free tier: 5 best picks daily. Upgrade for unlimited access.</p>
         <form onSubmit={submit} className="auth-form">
           <div className="field">
-            <label>Your name</label>
-            <input type="text" value={form.name} onChange={set('name')} required placeholder="Full name" />
+            <label>Full name</label>
+            <input type="text" value={form.name} onChange={set('name')} required placeholder="Your name" autoFocus />
           </div>
           <div className="field">
             <label>Email</label>
@@ -58,14 +61,15 @@ export default function RegisterPage({ navigate, onAuth }) {
             <label>Confirm password</label>
             <input type="password" value={form.confirm} onChange={set('confirm')} required placeholder="Repeat password" />
           </div>
-          {error && <div className="auth-error">{error}</div>}
+          {error && <div className="auth-error">⚠ {error}</div>}
           <button type="submit" className="btn-primary btn-full" disabled={loading}>
-            {loading ? 'Creating account…' : 'Create account'}
+            {loading ? <span className="btn-spinner" /> : null}
+            {loading ? 'Creating account…' : 'Create free account'}
           </button>
         </form>
         <p className="auth-switch">
           Have an account?{' '}
-          <button className="auth-link" onClick={() => navigate('/login')}>Log in</button>
+          <button className="auth-link" onClick={() => navigate('/login')}>Sign in</button>
         </p>
       </div>
     </div>

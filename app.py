@@ -1943,11 +1943,27 @@ def app_config():
 # ── Serve React build ─────────────────────────────────────────────────────────
 
 DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'dist')
+_INDEX_HTML = os.path.join(DIST, 'index.html')
+
+
+def _serve_index():
+    """Send index.html, with a helpful 503 if the dist hasn't been built yet."""
+    if not os.path.isfile(_INDEX_HTML):
+        return ('Frontend not built. Run: cd frontend && npm run build', 503)
+    return send_from_directory(DIST, 'index.html')
 
 
 @app.route('/')
 def index():
-    return send_from_directory(DIST, 'index.html')
+    return _serve_index()
+
+
+# Explicit SPA routes so hard-refresh / Korapay redirect never hits a 404
+@app.route('/subscribe')
+@app.route('/login')
+@app.route('/register')
+def spa_pages():
+    return _serve_index()
 
 
 @app.route('/assets/<path:filename>')
@@ -1960,7 +1976,7 @@ def serve(path):
     file_path = os.path.join(DIST, path)
     if os.path.isfile(file_path):
         return send_from_directory(DIST, path)
-    return send_from_directory(DIST, 'index.html')
+    return _serve_index()
 
 
 def _refresh_caches():

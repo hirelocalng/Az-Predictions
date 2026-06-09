@@ -1125,3 +1125,64 @@ body::after {
   0%, 100% { opacity: 1; transform: scale(1); }
   50%       { opacity: 0.35; transform: scale(1.4); }
 }
+
+/* ── Telegram channel links ──────────────────────────────────────────────────── */
+
+.tg-float {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #2AABEE;
+  color: #fff;
+  border-radius: 28px;
+  padding: 10px 18px 10px 13px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(42,171,238,0.45), 0 1px 4px rgba(0,0,0,0.35);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+
+.tg-float:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 7px 28px rgba(42,171,238,0.6), 0 2px 6px rgba(0,0,0,0.4);
+  color: #fff;
+  text-decoration: none;
+}
+
+.footer-tg {
+  margin-top: 16px;
+}
+
+.tg-footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #2AABEE;
+  text-decoration: none;
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.9;
+  transition: opacity 0.15s;
+}
+
+.tg-footer-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+  .tg-float span { display: none; }
+  .tg-float {
+    padding: 11px;
+    border-radius: 50%;
+    bottom: 18px;
+    right: 18px;
+  }
+}

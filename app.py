@@ -1421,16 +1421,26 @@ def serve(path):
     return send_from_directory(DIST, 'index.html')
 
 
-# ── APScheduler — live score + result checker every 2 minutes ────────────────
+def _refresh_caches():
+    """Reset all prediction caches so next request fetches fresh data."""
+    _INTL_TIPS_CACHE["ts"]  = 0.0
+    _DAILY_TIPS_CACHE["ts"] = 0.0
+    _CLUB_TIPS_CACHE["ts"]  = 0.0
+    _log.info('Caches cleared — fresh fetch on next request')
+
+
+# ── APScheduler — live update every 2 min + cache refresh every 6 h ──────────
 try:
     from apscheduler.schedulers.background import BackgroundScheduler as _BgSched
     _scheduler = _BgSched(daemon=True)
     _scheduler.add_job(_update_live_scores, 'interval', minutes=2,
                        id='live_checker', misfire_grace_time=60)
+    _scheduler.add_job(_refresh_caches, 'interval', hours=6,
+                       id='cache_refresh', misfire_grace_time=300)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
-    _log.info('APScheduler started — live update every 2 min')
+    _log.info('APScheduler started — live update every 2 min, cache refresh every 6 h')
 except Exception as _sch_err:
     _log.warning('APScheduler not available: %s', _sch_err)
 

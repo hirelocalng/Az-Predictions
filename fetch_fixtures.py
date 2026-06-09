@@ -434,6 +434,8 @@ def _fetch_intl_from_espn(today: str) -> list:
 
                 esp_status = (ev.get("status") or {}).get("type", {}).get("name", "")
                 status = _ESPN_STATUS_MAP.get(esp_status, "TIMED")
+                if status == "FINISHED":
+                    continue  # don't surface completed matches
 
                 league_name = ev.get("name", "").split(" at ")[0] if " at " in ev.get("name","") else "International Friendly"
                 # Use competition display name if available
@@ -577,6 +579,9 @@ def get_intl_tips(wc_predict_fn) -> list:
             "best_bet":         bet,
         })
 
+    # Drop any tip whose kickoff date is before today (stale data guard)
+    tips = [t for t in tips
+            if not t.get("utc_kickoff") or t["utc_kickoff"][:10] >= today]
     return tips
 
 
@@ -746,6 +751,9 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
             "_conf":            overall,
         })
 
+    # Drop any result whose kickoff date is before today (stale data guard)
+    results = [r for r in results
+               if not r.get("utc_kickoff") or r["utc_kickoff"][:10] >= today]
     results.sort(key=lambda x: x["_conf"], reverse=True)
     out = results[:_MAX_TIPS]
     for p in out:

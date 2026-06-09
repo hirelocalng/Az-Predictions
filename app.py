@@ -732,6 +732,12 @@ def _team_similar(a, b):
     return difflib.SequenceMatcher(None, a, b).ratio() > 0.72
 
 
+_TSDB_NOT_DONE = frozenset({
+    'scheduled', 'not started', 'in progress', 'halftime', 'half time',
+    'live', 'postponed', 'cancelled', 'suspended', 'abandoned',
+})
+
+
 def _fetch_tsdb_result(home_team, away_team, match_date):
     """Return (home_score, away_score) from TheSportsDB or None if not found."""
     import requests as _req
@@ -741,21 +747,75 @@ def _fetch_tsdb_result(home_team, away_team, match_date):
             return None
         events = r.json().get('events') or []
         for ev in events:
-            status = (ev.get('strStatus') or '').lower()
-            if 'finish' not in status and 'final' not in status:
+            hs_raw = ev.get('intHomeScore')
+            as_raw = ev.get('intAwayScore')
+            if hs_raw is None or as_raw is None:
                 continue
-            hs = ev.get('intHomeScore')
-            as_ = ev.get('intAwayScore')
-            if hs is None or as_ is None:
+            try:
+                hs, as_ = int(float(hs_raw)), int(float(as_raw))
+            except (ValueError, TypeError):
+                continue
+            status = (ev.get('strStatus') or '').lower().strip()
+            # Accept any event with real scores unless explicitly not-final.
+            # TheSportsDB uses 'Match Finished', 'FT', 'AET', 'AP', or empty
+            # for historical matches — never rely on specific status keywords.
+            if status and status in _TSDB_NOT_DONE:
+                continue
+            if not status and 'live' in (ev.get('strProgress') or '').lower():
                 continue
             eh = ev.get('strHomeTeam', '')
             ea = ev.get('strAwayTeam', '')
             if _team_similar(eh, home_team) and _team_similar(ea, away_team):
-                return int(hs), int(as_)
+                return hs, as_
             if _team_similar(eh, away_team) and _team_similar(ea, home_team):
-                return int(as_), int(hs)
+                return as_, hs
     except Exception as exc:
         _log.warning('TSDB lookup failed: %s', exc)
+    return None
+
+
+_FD_RESULT_URL = 'https://api.football-data.org/v4/matches'
+_FD_RESULT_KEY = '118333be3eb84d0ca4e10740f6d62255'
+
+
+def _fetch_fd_result(home_team, away_team, match_date):
+    """Return (home_score, away_score) from football-data.org or None."""
+    import requests as _req
+    try:
+        r = _req.get(
+            _FD_RESULT_URL,
+            headers={'X-Auth-Token': _FD_RESULT_KEY},
+            params={'dateFrom': match_date, 'dateTo': match_date},
+            timeout=12,
+        )
+        if r.status_code != 200:
+            return None
+        for m in r.json().get('matches', []):
+            if m.get('status') != 'FINISHED':
+                continue
+            ft = (m.get('score') or {}).get('fullTime') or {}
+            hs, as_ = ft.get('home'), ft.get('away')
+            if hs is None or as_ is None:
+                continue
+            hn = (m.get('homeTeam') or {}).get('name', '')
+            an = (m.get('awayTeam') or {}).get('name', '')
+            if _team_similar(hn, home_team) and _team_similar(an, away_team):
+                return int(hs), int(as_)
+            if _team_similar(hn, away_team) and _team_similar(an, home_team):
+                return int(as_), int(hs)
+    except Exception as exc:
+        _log.warning('FD result lookup failed: %s', exc)
+    return None
+
+
+def _get_result(home_team, away_team, match_date):
+    """Try every result source in priority order; return first match found."""
+    r = _fetch_tsdb_result(home_team, away_team, match_date)
+    if r:
+        return r
+    r = _fetch_fd_result(home_team, away_team, match_date)
+    if r:
+        return r
     return None
 
 
@@ -786,9 +846,10 @@ def _resolve_result(pw, home, away, hs, as_):
 
 
 def _check_pending_results():
-    """APScheduler job: fetch final scores for PENDING predictions past kickoff."""
-    _log.info('APScheduler: checking pending predictions…')
+    """Hourly job: fetch final scores for every PENDING prediction past kickoff+2h."""
+    _log.info('Results check: scanning PENDING predictions…')
     now = datetime.now(timezone.utc)
+    resolved = 0
 
     # ── PostgreSQL path ────────────────────────────────────────────────────────
     try:
@@ -814,7 +875,7 @@ def _check_pending_results():
                         continue
                     if kickoff + timedelta(hours=2) > now:
                         continue
-                    result = _fetch_tsdb_result(home, away, match_date)
+                    result = _get_result(home, away, match_date)
                     if result is None:
                         continue
                     hs, as_ = result
@@ -822,11 +883,12 @@ def _check_pending_results():
                     cur.execute("""
                         UPDATE predictions
                         SET actual_home_score=%s, actual_away_score=%s,
-                            result_status=%s
+                            result_status=%s, match_status='FINISHED'
                         WHERE match_id=%s
                     """, (hs, as_, status, mid))
-                    _log.info('DB result: %s %d-%d %s → %s',
-                              home, hs, as_, away, status)
+                    _log.info('Result: %s %d-%d %s → %s', home, hs, as_, away, status)
+                    resolved += 1
+                _log.info('Results check done: %d resolved', resolved)
                 return
     except Exception as e:
         _log.warning('DB check_pending failed, falling back to JSON: %s', e)
@@ -851,7 +913,7 @@ def _check_pending_results():
                 continue
             if kickoff + timedelta(hours=2) > now:
                 continue
-            result = _fetch_tsdb_result(pred['home_team'], pred['away_team'], match_date)
+            result = _get_result(pred['home_team'], pred['away_team'], match_date)
             if result is None:
                 continue
             hs, as_ = result
@@ -868,7 +930,13 @@ def _check_pending_results():
 
 # ── ESPN live-score polling ───────────────────────────────────────────────────
 
-_ESPN_LIVE_LEAGUES = ['fifa.world', 'fifa.friendly', 'uefa.friendly', 'conmebol.friendly']
+_ESPN_LIVE_LEAGUES = [
+    'fifa.world', 'fifa.friendly',
+    'uefa.friendly', 'conmebol.friendly',
+    'afc.cupqualification',  # Asian World Cup Qualifying
+    'caf.nations',           # Africa Cup of Nations
+    'concacaf.nations.league',
+]
 
 
 def _fetch_espn_events():
@@ -957,7 +1025,7 @@ def _update_live_scores():
                             """, (hs, as_, minute, mid))
                             _log.info('LIVE %s %d-%d %s (%s)', home, hs, as_, away, minute)
                     else:
-                        # ESPN not tracking it — try TSDB for any past-window match
+                        # ESPN not tracking it — try all result sources
                         try:
                             kickoff = (datetime.fromisoformat(kickoff_str.replace('Z', '+00:00'))
                                        if kickoff_str
@@ -966,7 +1034,7 @@ def _update_live_scores():
                             continue
                         if kickoff + timedelta(hours=2) > now:
                             continue
-                        result = _fetch_tsdb_result(home or '', away or '', match_date or '')
+                        result = _get_result(home or '', away or '', match_date or '')
                         if result:
                             hs, as_ = result
                             status = _resolve_result(pw or '', home or '', away or '', hs, as_)
@@ -976,13 +1044,11 @@ def _update_live_scores():
                                     result_status=%s, match_status='FINISHED'
                                 WHERE match_id=%s
                             """, (hs, as_, status, mid))
-                            _log.info('TSDB result %s %d-%d %s → %s',
+                            _log.info('Result %s %d-%d %s → %s',
                                       home, hs, as_, away, status)
-                return
     except Exception as e:
-        _log.warning('DB live update failed, falling back: %s', e)
-
-    _check_pending_results()
+        _log.warning('DB live update failed: %s', e)
+        _check_pending_results()
 
 
 WC_FIXTURES_RAW = [
@@ -1840,12 +1906,19 @@ try:
     _scheduler = _BgSched(daemon=True)
     _scheduler.add_job(_update_live_scores, 'interval', minutes=2,
                        id='live_checker', misfire_grace_time=60)
+    _scheduler.add_job(_check_pending_results, 'interval', hours=1,
+                       id='results_checker', misfire_grace_time=300)
     _scheduler.add_job(_refresh_caches, 'interval', hours=6,
                        id='cache_refresh', misfire_grace_time=300)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
-    _log.info('APScheduler started — live update every 2 min, cache refresh every 6 h')
+    _log.info('APScheduler started — live/2 min, results/1 h, cache/6 h')
+    # Resolve any already-finished matches immediately on startup
+    try:
+        _check_pending_results()
+    except Exception as _cpr_err:
+        _log.warning('Startup results check failed: %s', _cpr_err)
 except Exception as _sch_err:
     _log.warning('APScheduler not available: %s', _sch_err)
 

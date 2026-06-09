@@ -59,16 +59,32 @@ _PAYSTACK_SECRET = os.environ.get('PAYSTACK_SECRET_KEY', '')
 _PAYSTACK_PUBLIC = os.environ.get('PAYSTACK_PUBLIC_KEY', '')
 
 
+def _build_db_url():
+    """Return a psycopg2-ready URL: postgresql:// scheme + sslmode=require for Railway."""
+    url = _DB_URL
+    if not url:
+        return url
+    # Railway sometimes provides postgres:// — psycopg2 requires postgresql://
+    if url.startswith('postgres://'):
+        url = 'postgresql://' + url[len('postgres://'):]
+    # Railway PostgreSQL requires SSL; append only if not already specified
+    if 'sslmode' not in url:
+        url += ('&' if '?' in url else '?') + 'sslmode=require'
+    return url
+
+_DB_CONN_URL = _build_db_url()
+
+
 @contextmanager
 def _db():
     """Yield (conn, cur); both None when DATABASE_URL is unset."""
-    if not _DB_URL:
+    if not _DB_CONN_URL:
         yield None, None
         return
     conn = cur = None
     try:
         import psycopg2
-        conn = psycopg2.connect(_DB_URL)
+        conn = psycopg2.connect(_DB_CONN_URL)
         cur  = conn.cursor()
         yield conn, cur
         conn.commit()
@@ -82,10 +98,15 @@ def _db():
 
 
 def _init_db():
-    """Create predictions table if it doesn't already exist."""
+    """Create all tables via CREATE TABLE IF NOT EXISTS — safe to run on every startup."""
+    if not _DB_CONN_URL:
+        print('DB init skipped — DATABASE_URL not set (using JSON fallback)', flush=True)
+        return
+    print(f'DB init: connecting to PostgreSQL…', flush=True)
     try:
         with _db() as (conn, cur):
             if conn is None:
+                print('DB init: connection returned None unexpectedly', flush=True)
                 return
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS predictions (
@@ -134,8 +155,10 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_minute VARCHAR(10)",
             ]:
                 cur.execute(_col)
-        _log.info('DB: predictions table ready')
+        print('DB init: all tables ready (predictions, users, sessions) ✓', flush=True)
+        _log.info('DB: all tables ready')
     except Exception as e:
+        print(f'DB init FAILED: {e}', flush=True)
         _log.error('DB init: %s', e)
 
 

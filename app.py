@@ -15,13 +15,14 @@ Run:
     python app.py
 """
 
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, send_from_directory, request
 from flask_cors import CORS
 from contextlib import contextmanager
-import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading
+import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading, secrets
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
+from werkzeug.security import generate_password_hash, check_password_hash
 
 _log = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ RES_ENCODER = club_result['result_encoder'] if club_result else None
 _HISTORY_PATH = os.path.join(_BASE_DIR, 'prediction_history.json')
 _HISTORY_LOCK = threading.Lock()
 _DB_URL       = os.environ.get('DATABASE_URL', '')
+_PAYSTACK_SECRET = os.environ.get('PAYSTACK_SECRET_KEY', '')
+_PAYSTACK_PUBLIC = os.environ.get('PAYSTACK_PUBLIC_KEY', '')
 
 
 @contextmanager
@@ -102,6 +105,26 @@ def _init_db():
                     result_status     VARCHAR(10) DEFAULT 'PENDING',
                     kickoff_utc       VARCHAR(50),
                     created_at        TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id            SERIAL PRIMARY KEY,
+                    name          VARCHAR(100) NOT NULL,
+                    email         VARCHAR(255) UNIQUE NOT NULL,
+                    password_hash VARCHAR(255) NOT NULL,
+                    is_premium    BOOLEAN DEFAULT FALSE,
+                    premium_until TIMESTAMPTZ,
+                    created_at    TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id         SERIAL PRIMARY KEY,
+                    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    token      VARCHAR(64) UNIQUE NOT NULL,
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
             for _col in [
@@ -237,6 +260,39 @@ def _completed_keys():
     data = _get_history()
     return {p['match_id'] for p in data.get('predictions', [])
             if p['result_status'] in ('WON', 'LOST')}
+
+
+def _get_current_user():
+    """Return user dict from Bearer token, or None if invalid/expired."""
+    auth_hdr = request.headers.get('Authorization', '')
+    if not auth_hdr.startswith('Bearer '):
+        return None
+    token = auth_hdr[7:].strip()
+    if not token:
+        return None
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return None
+            cur.execute("""
+                SELECT u.id, u.name, u.email, u.is_premium, u.premium_until
+                FROM sessions s
+                JOIN users u ON s.user_id = u.id
+                WHERE s.token = %s AND s.expires_at > NOW()
+            """, (token,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            now_utc = datetime.now(timezone.utc)
+            is_prem  = bool(row[3]) and (row[4] is None or row[4] > now_utc)
+            return {
+                'id': row[0], 'name': row[1], 'email': row[2],
+                'is_premium': is_prem,
+                'premium_until': row[4].isoformat() if row[4] else None,
+            }
+    except Exception as e:
+        _log.warning('_get_current_user: %s', e)
+        return None
 
 
 # ── International prediction — copied verbatim from worldcup_predict.py ───────
@@ -1195,12 +1251,25 @@ def club_tips():
     return jsonify(active)
 
 
+def _wc_round_cutoff():
+    """Return ISO date string — only show WC fixtures up to this date (auto-advances by round)."""
+    from datetime import date as _d
+    today = datetime.now(timezone.utc).date()
+    if today < _d(2026, 6, 15): return '2026-06-14'   # Round 1 first batch
+    if today < _d(2026, 6, 18): return '2026-06-17'   # Full round 1
+    if today < _d(2026, 6, 24): return '2026-06-23'   # Round 2
+    return '2026-06-28'                                 # Round 3
+
+
 @app.route('/api/worldcup/fixtures')
 def wc_fixtures():
-    now  = datetime.now(timezone.utc)
-    done = _completed_keys()
+    now    = datetime.now(timezone.utc)
+    done   = _completed_keys()
+    cutoff = _wc_round_cutoff()
     upcoming = []
     for f in _WC_FIXTURES:
+        if f['date'] > cutoff:
+            continue
         mk = _match_key(f['home'], f['away'], f['date'])
         if mk in done:
             continue
@@ -1396,6 +1465,131 @@ def live_scores():
     except Exception as e:
         _log.warning('live-scores endpoint: %s', e)
     return jsonify({'live': {}})
+
+
+# ── Auth endpoints ────────────────────────────────────────────────────────────
+
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    data     = request.get_json() or {}
+    name     = (data.get('name') or '').strip()
+    email    = (data.get('email') or '').strip().lower()
+    password = data.get('password', '')
+    if not name or not email or not password:
+        return jsonify({'error': 'Name, email and password are required'}), 400
+    if len(password) < 6:
+        return jsonify({'error': 'Password must be at least 6 characters'}), 400
+    pw_hash = generate_password_hash(password)
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database not available'}), 503
+            cur.execute('SELECT id FROM users WHERE email=%s', (email,))
+            if cur.fetchone():
+                return jsonify({'error': 'Email already registered'}), 409
+            cur.execute(
+                'INSERT INTO users (name,email,password_hash) VALUES (%s,%s,%s) RETURNING id',
+                (name, email, pw_hash)
+            )
+            user_id = cur.fetchone()[0]
+            token   = secrets.token_hex(32)
+            expires = datetime.now(timezone.utc) + timedelta(days=30)
+            cur.execute(
+                'INSERT INTO sessions (user_id,token,expires_at) VALUES (%s,%s,%s)',
+                (user_id, token, expires)
+            )
+        return jsonify({'token': token,
+                        'user':  {'id': user_id, 'name': name,
+                                  'email': email, 'is_premium': False}}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    data     = request.get_json() or {}
+    email    = (data.get('email') or '').strip().lower()
+    password = data.get('password', '')
+    if not email or not password:
+        return jsonify({'error': 'Email and password are required'}), 400
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database not available'}), 503
+            cur.execute(
+                'SELECT id,name,email,password_hash,is_premium FROM users WHERE email=%s',
+                (email,)
+            )
+            row = cur.fetchone()
+            if not row or not check_password_hash(row[3], password):
+                return jsonify({'error': 'Invalid email or password'}), 401
+            uid, uname, uemail, _, is_prem = row
+            token   = secrets.token_hex(32)
+            expires = datetime.now(timezone.utc) + timedelta(days=30)
+            cur.execute(
+                'INSERT INTO sessions (user_id,token,expires_at) VALUES (%s,%s,%s)',
+                (uid, token, expires)
+            )
+        return jsonify({'token': token,
+                        'user':  {'id': uid, 'name': uname,
+                                  'email': uemail, 'is_premium': bool(is_prem)}})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/auth/me')
+def auth_me():
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    return jsonify({'user': user})
+
+
+# ── Payment endpoints ─────────────────────────────────────────────────────────
+
+@app.route('/api/payment/verify')
+def payment_verify():
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    reference = request.args.get('reference', '')
+    if not reference:
+        return jsonify({'error': 'Reference required'}), 400
+    if not _PAYSTACK_SECRET:
+        return jsonify({'error': 'Payment not configured'}), 503
+    import requests as _req
+    try:
+        r = _req.get(
+            f'https://api.paystack.co/transaction/verify/{reference}',
+            headers={'Authorization': f'Bearer {_PAYSTACK_SECRET}'},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return jsonify({'error': 'Paystack verification failed'}), 502
+        ps  = r.json().get('data', {})
+        if ps.get('status') != 'success':
+            return jsonify({'error': 'Payment not successful'}), 400
+        amount = ps.get('amount', 0)          # kobo
+        months = 3 if amount >= 1_400_000 else 1
+        now_u  = datetime.now(timezone.utc)
+        expires = now_u + timedelta(days=30 * months)
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+            cur.execute(
+                'UPDATE users SET is_premium=TRUE,premium_until=%s WHERE id=%s',
+                (expires, user['id'])
+            )
+        # Return refreshed user
+        updated = _get_current_user()
+        return jsonify({'success': True, 'user': updated or user})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/config')
+def app_config():
+    return jsonify({'paystack_public_key': _PAYSTACK_PUBLIC})
 
 
 # ── Serve React build ─────────────────────────────────────────────────────────

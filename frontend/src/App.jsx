@@ -4,7 +4,26 @@ import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 import ResultsSection from './components/ResultsSection.jsx'
+import LoginPage from './components/LoginPage.jsx'
+import RegisterPage from './components/RegisterPage.jsx'
+import SubscribePage from './components/SubscribePage.jsx'
 import { LiveScoresContext } from './contexts/LiveScoresContext.jsx'
+import { AuthContext } from './contexts/AuthContext.jsx'
+
+// ── Routing helpers ───────────────────────────────────────────────────────────
+
+const pathToPage = p => {
+  if (p === '/login')     return 'login'
+  if (p === '/register')  return 'register'
+  if (p === '/subscribe') return 'subscribe'
+  return 'home'
+}
+
+const getStoredAuth = () => {
+  try { return JSON.parse(localStorage.getItem('az_auth') || 'null') } catch { return null }
+}
+
+// ── Telegram ─────────────────────────────────────────────────────────────────
 
 const TelegramIcon = ({ size = 18 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -14,97 +33,104 @@ const TelegramIcon = ({ size = 18 }) => (
 
 function TelegramFloat() {
   return (
-    <a
-      href="https://t.me/AZPREDICTS"
-      target="_blank"
-      rel="noopener noreferrer"
-      className="tg-float"
-      aria-label="Join AZPREDICTS Telegram channel for free daily tips"
-    >
+    <a href="https://t.me/AZPREDICTS" target="_blank" rel="noopener noreferrer"
+       className="tg-float" aria-label="Join AZPREDICTS Telegram channel">
       <TelegramIcon />
       <span>📢 Join Telegram · @AZPREDICTS</span>
     </a>
   )
 }
 
+// ── Logo ──────────────────────────────────────────────────────────────────────
+
 const LogoIcon = () => (
   <svg viewBox="0 0 24 16" fill="none">
-    {/* Glow halo behind prediction dot */}
     <circle cx="22" cy="1.5" r="5" fill="var(--green)" opacity="0.10" />
-    {/* Historical trend — solid */}
-    <path
-      d="M1 14.5 L6.5 8.5 L11 11 L16 4"
-      stroke="var(--green)"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-    {/* Prediction projection — dashed */}
-    <path
-      d="M16 4 L22 1.5"
-      stroke="var(--green)"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeDasharray="2.8 2.2"
-      opacity="0.5"
-    />
-    {/* Prediction endpoint dot — animated */}
+    <path d="M1 14.5 L6.5 8.5 L11 11 L16 4" stroke="var(--green)" strokeWidth="2.2"
+          strokeLinecap="round" strokeLinejoin="round" />
+    <path d="M16 4 L22 1.5" stroke="var(--green)" strokeWidth="2.2"
+          strokeLinecap="round" strokeDasharray="2.8 2.2" opacity="0.5" />
     <circle cx="22" cy="1.5" r="2.4" fill="var(--green)" className="logo-dot-pulse" />
   </svg>
 )
 
-function Header({ active, setActive }) {
-  const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+// ── Header ────────────────────────────────────────────────────────────────────
+
+function Header({ active, setActive, auth, onLogout, navigate }) {
+  const scrollTo  = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+  const isPremium = Boolean(auth?.user?.is_premium)
+
   return (
     <header className="header">
-      <div className="header-logo">
+      <div className="header-logo" style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
         <div className="logo-mark"><LogoIcon /></div>
-        <span className="logo-word">Az</span><span className="logo-sep">·</span><span className="logo-accent">Predictions</span>
+        <span className="logo-word">Az</span>
+        <span className="logo-sep">·</span>
+        <span className="logo-accent">Predictions</span>
       </div>
 
       <nav className="header-nav">
-        {[['daily-tips',"Today's Tips"],['worldcup','World Cup 2026'],['intl','Live Internationals'],['club','Club Tips'],['history','History']].map(([id, label]) => (
-          <button
-            key={id}
+        {[
+          ['daily-tips', "Today's Tips"],
+          ['worldcup',   'World Cup 2026'],
+          ['intl',       'Internationals'],
+          ['club',       'Club Tips'],
+          ['history',    'History'],
+        ].map(([id, label]) => (
+          <button key={id}
             className={`nav-btn${active === id ? ' active' : ''}`}
-            onClick={() => { setActive(id); scrollTo(id) }}
-          >
+            onClick={() => { setActive(id); scrollTo(id) }}>
             {label}
           </button>
         ))}
       </nav>
 
-      <div className="header-status">
-        <div className="status-dot" />
-        Live
+      <div className="header-right">
+        {auth ? (
+          <div className="user-area">
+            {isPremium
+              ? <span className="premium-badge" title="Premium member">👑 Premium</span>
+              : <button className="nav-btn nav-upgrade" onClick={() => navigate('/subscribe')}>Upgrade</button>
+            }
+            <span className="user-name">{auth.user.name.split(' ')[0]}</span>
+            <button className="nav-btn" onClick={onLogout}>Log out</button>
+          </div>
+        ) : (
+          <div className="user-area">
+            <button className="nav-btn" onClick={() => navigate('/login')}>Log in</button>
+            <button className="nav-btn nav-cta" onClick={() => navigate('/register')}>Sign up</button>
+          </div>
+        )}
       </div>
     </header>
   )
 }
 
-function Hero({ onDailyTips, onWC, onIntl, onClub }) {
+// ── Hero ──────────────────────────────────────────────────────────────────────
+
+function Hero({ onDailyTips, onWC, onIntl, onClub, navigate }) {
   return (
     <section className="hero">
       <div className="hero-eyebrow">AI-Powered Match Predictions</div>
-
       <h1 className="hero-title">
         The Smartest<br />
         <span className="accent-green">Football</span>{' '}
         <span className="accent-amber">Predictor</span>
       </h1>
-
       <p className="hero-desc">
         XGBoost models trained on 280,000+ matches across 40 leagues.
         World Cup 2026 forecasts, live internationals, and daily club tips.
       </p>
-
       <div className="hero-actions">
         <button className="btn-primary" onClick={onDailyTips}>Today's Top 5</button>
         <button className="btn-outline" onClick={onWC}>World Cup 2026</button>
-        <button className="btn-outline" onClick={onIntl}>Live Internationals</button>
+        <button className="btn-outline" onClick={onIntl}>Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
+        <button className="btn-outline" onClick={() => navigate('/subscribe')}
+                style={{ borderColor: 'rgba(201,146,42,0.5)', color: 'var(--amber)' }}>
+          👑 Go Premium
+        </button>
       </div>
-
       <div className="hero-metrics">
         {[
           ['280k+', 'Matches trained', 'green'],
@@ -122,59 +148,118 @@ function Hero({ onDailyTips, onWC, onIntl, onClub }) {
   )
 }
 
-export default function App() {
-  const [active, setActive] = useState('daily-tips')
-  const [liveScores, setLiveScores] = useState({})
-  const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+// ── App ───────────────────────────────────────────────────────────────────────
 
+export default function App() {
+  const [page,       setPage]       = useState(() => pathToPage(window.location.pathname))
+  const [active,     setActive]     = useState('daily-tips')
+  const [auth,       setAuthState]  = useState(getStoredAuth)
+  const [liveScores, setLiveScores] = useState({})
+
+  const navigate = path => {
+    window.history.pushState({}, '', path)
+    setPage(pathToPage(path))
+  }
+
+  const saveAuth = data => {
+    localStorage.setItem('az_auth', JSON.stringify(data))
+    setAuthState(data)
+  }
+
+  const logout = () => {
+    localStorage.removeItem('az_auth')
+    setAuthState(null)
+    navigate('/')
+  }
+
+  // Browser back/forward
+  useEffect(() => {
+    const handlePop = () => setPage(pathToPage(window.location.pathname))
+    window.addEventListener('popstate', handlePop)
+    return () => window.removeEventListener('popstate', handlePop)
+  }, [])
+
+  // Verify stored token on mount
+  useEffect(() => {
+    if (!auth?.token) return
+    fetch('/api/auth/me', { headers: { Authorization: `Bearer ${auth.token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.user) saveAuth({ ...auth, user: d.user })
+        else logout()
+      })
+      .catch(() => {})
+  }, [])
+
+  // Live scores polling
   useEffect(() => {
     const poll = () =>
-      fetch('/api/live-scores')
-        .then(r => r.json())
-        .then(d => setLiveScores(d.live || {}))
-        .catch(() => {})
+      fetch('/api/live-scores').then(r => r.json()).then(d => setLiveScores(d.live || {})).catch(() => {})
     poll()
     const t = setInterval(poll, 60_000)
     return () => clearInterval(t)
   }, [])
 
+  const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+
+  const authCtx = {
+    auth,
+    isPremium: Boolean(auth?.user?.is_premium),
+    navigate,
+    logout,
+  }
+
+  // Auth pages (full-page, no shell)
+  if (page === 'login')
+    return <LoginPage navigate={navigate} onAuth={saveAuth} />
+  if (page === 'register')
+    return <RegisterPage navigate={navigate} onAuth={saveAuth} />
+  if (page === 'subscribe')
+    return <SubscribePage navigate={navigate} auth={auth} onAuth={saveAuth} />
+
+  // Main app
   return (
-    <LiveScoresContext.Provider value={liveScores}>
-    <div className="app">
-      <Header active={active} setActive={setActive} />
+    <AuthContext.Provider value={authCtx}>
+      <LiveScoresContext.Provider value={liveScores}>
+        <div className="app">
+          <Header active={active} setActive={setActive}
+                  auth={auth} onLogout={logout} navigate={navigate} />
 
-      <main style={{ paddingTop: 60 }}>
-        <Hero
-          onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
-          onWC={() => { setActive('worldcup'); scrollTo('worldcup') }}
-          onIntl={() => { setActive('intl'); scrollTo('intl') }}
-          onClub={() => { setActive('club'); scrollTo('club') }}
-        />
-        <div className="divider" />
-        <DailyTipsSection />
-        <div className="divider" />
-        <WorldCupSection />
-        <div className="divider" />
-        <IntlSection />
-        <div className="divider" />
-        <ClubSection />
-        <div className="divider" />
-        <ResultsSection />
-      </main>
+          <main style={{ paddingTop: 60 }}>
+            <Hero
+              onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
+              onWC={()        => { setActive('worldcup');   scrollTo('worldcup')   }}
+              onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
+              onClub={()      => { setActive('club');       scrollTo('club')       }}
+              navigate={navigate}
+            />
+            <div className="divider" />
+            <DailyTipsSection />
+            <div className="divider" />
+            <WorldCupSection />
+            <div className="divider" />
+            <IntlSection />
+            <div className="divider" />
+            <ClubSection />
+            <div className="divider" />
+            <ResultsSection />
+          </main>
 
-      <footer className="footer">
-        <strong>Az-Predictions</strong> — AI Football Predictions &nbsp;·&nbsp;
-        Models trained on public match data &nbsp;·&nbsp;
-        For entertainment purposes only<br />
-        Please gamble responsibly. 18+
-        <div className="footer-tg">
-          <a href="https://t.me/AZPREDICTS" target="_blank" rel="noopener noreferrer" className="tg-footer-link">
-            <TelegramIcon size={15} />&ensp;@AZPREDICTS — Free Daily Tips on Telegram
-          </a>
+          <footer className="footer">
+            <strong>Az-Predictions</strong> — AI Football Predictions &nbsp;·&nbsp;
+            Models trained on public match data &nbsp;·&nbsp;
+            For entertainment purposes only<br />
+            Please gamble responsibly. 18+
+            <div className="footer-tg">
+              <a href="https://t.me/AZPREDICTS" target="_blank" rel="noopener noreferrer"
+                 className="tg-footer-link">
+                <TelegramIcon size={15} />&ensp;@AZPREDICTS — Free Daily Tips on Telegram
+              </a>
+            </div>
+          </footer>
+          <TelegramFloat />
         </div>
-      </footer>
-      <TelegramFloat />
-    </div>
-    </LiveScoresContext.Provider>
+      </LiveScoresContext.Provider>
+    </AuthContext.Provider>
   )
 }

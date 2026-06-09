@@ -3,6 +3,8 @@ import PredictionCard from './PredictionCard.jsx'
 import PremiumGate from './PremiumGate.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 
+const FREE_LIMIT = 5
+
 export default function IntlSection() {
   const { auth }  = useAuth()
   const isPremium = Boolean(auth?.user?.is_premium)
@@ -12,12 +14,14 @@ export default function IntlSection() {
   const [error,    setError]    = useState(false)
 
   useEffect(() => {
-    if (!isPremium) { setLoading(false); return }
     fetch('/api/intl/fixtures')
       .then(r => r.json())
       .then(d => { setFixtures(d); setLoading(false) })
       .catch(() => { setError(true); setLoading(false) })
-  }, [isPremium])
+  }, [])
+
+  const free   = fixtures.slice(0, FREE_LIMIT)
+  const locked = fixtures.slice(FREE_LIMIT)
 
   return (
     <section className="section" id="intl">
@@ -28,30 +32,43 @@ export default function IntlSection() {
         </h2>
       </div>
 
-      {!isPremium ? <PremiumGate /> : (
+      {loading && (
+        <div className="grid-3">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className="pred-card">
+              <div className="skeleton" style={{ height: 260 }} />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <p style={{ textAlign:'center', color:'var(--text-muted)', padding:'40px 0' }}>
+          Could not load fixtures — ensure the Flask server is running.
+        </p>
+      )}
+
+      {!loading && !error && fixtures.length === 0 && (
+        <p style={{ textAlign:'center', color:'var(--text-muted)', padding:'40px 0' }}>
+          No international matches today — check back tomorrow.
+        </p>
+      )}
+
+      {!loading && !error && fixtures.length > 0 && (
         <>
-          {loading && (
-            <div className="grid-3">
-              {[...Array(3)].map((_, i) => (
-                <div key={i} className="pred-card">
-                  <div className="skeleton" style={{ height: 260 }} />
-                </div>
-              ))}
+          <div className="grid-3">
+            {free.map(f => <PredictionCard key={f.id} tip={f} />)}
+          </div>
+
+          {locked.length > 0 && !isPremium && (
+            <div style={{ marginTop: 32 }}>
+              <PremiumGate lockedCount={locked.length} />
             </div>
           )}
-          {error && (
-            <p style={{ textAlign:'center', color:'var(--text-muted)', padding:'40px 0' }}>
-              Could not load fixtures — ensure the Flask server is running.
-            </p>
-          )}
-          {!loading && !error && fixtures.length === 0 && (
-            <p style={{ textAlign:'center', color:'var(--text-muted)', padding:'40px 0' }}>
-              No international matches today — check back tomorrow.
-            </p>
-          )}
-          {!loading && !error && fixtures.length > 0 && (
-            <div className="grid-3">
-              {fixtures.map(f => <PredictionCard key={f.id} tip={f} />)}
+
+          {locked.length > 0 && isPremium && (
+            <div className="grid-3" style={{ marginTop: 20 }}>
+              {locked.map(f => <PredictionCard key={f.id} tip={f} />)}
             </div>
           )}
         </>

@@ -1,13 +1,14 @@
 import { useAuth } from '../contexts/AuthContext.jsx'
 
-export default function PremiumGate() {
+export default function PremiumGate({ lockedCount }) {
   const { auth, navigate } = useAuth()
+  const countText = lockedCount ? `${lockedCount} more prediction${lockedCount === 1 ? '' : 's'}` : 'more predictions'
   return (
     <div className="premium-gate">
       <div className="gate-crown">👑</div>
-      <h3 className="gate-title">Premium Feature</h3>
+      <h3 className="gate-title">Unlock {countText}</h3>
       <p className="gate-desc">
-        Unlock all World Cup fixtures, live internationals, and club football tips.
+        Upgrade to Premium to see all predictions with no limits across every section.
       </p>
       <div className="gate-pricing">
         <span>Monthly — ₦5,000</span>
@@ -19,7 +20,7 @@ export default function PremiumGate() {
           Upgrade to Premium
         </button>
         {!auth && (
-          <button className="btn-outline" style={{ marginLeft: 10 }} onClick={() => navigate('/login')}>
+          <button className="btn-outline" onClick={() => navigate('/login')}>
             Log in
           </button>
         )}

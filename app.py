@@ -389,6 +389,11 @@ def _migrate_json_to_db():
 sys.path.insert(0, _BASE_DIR)
 from worldcup_predict import predict_match  # noqa: E402
 
+_WC_DATA_PATH         = os.path.join(_BASE_DIR, 'data', 'results.csv')
+_WC_RESULT_MODEL_PATH = os.path.join(_BASE_DIR, 'worldcup_result_model.pkl')
+_WC_GOALS_MODEL_PATH  = os.path.join(_BASE_DIR, 'worldcup_goals_model.pkl')
+_WC_FORM_WINDOW       = 10
+
 _TOURNAMENT_IMPORTANCE = {
     'FIFA World Cup':                            1.00,
     'Confederations Cup':                        0.92,

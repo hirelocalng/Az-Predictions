@@ -1510,3 +1510,237 @@ body::after {
   .premium-badge { display: none; }
   .nav-upgrade { display: none; }
 }
+
+/* ── Best Bet card ───────────────────────────────────────────────────────────── */
+
+.hero-bb-btn {
+  background: linear-gradient(135deg, #c9922a, #e0a830);
+  color: #000;
+}
+
+.best-bet-card {
+  border: 2px solid rgba(201,146,42,0.5);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(201,146,42,0.08) 0%, rgba(201,146,42,0.03) 50%, var(--bg-card) 100%);
+  box-shadow: 0 0 48px rgba(201,146,42,0.10), 0 2px 8px rgba(0,0,0,0.4);
+  padding: 32px 36px;
+  max-width: 720px;
+  margin: 0 auto;
+  position: relative;
+  overflow: hidden;
+}
+
+.best-bet-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+  opacity: 0.7;
+}
+
+.bb-star-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--amber);
+  background: rgba(201,146,42,0.12);
+  border: 1px solid rgba(201,146,42,0.3);
+  border-radius: 20px;
+  padding: 4px 14px;
+  margin-bottom: 22px;
+}
+
+.bb-body {
+  display: flex;
+  gap: 36px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bb-left { flex: 1; min-width: 0; }
+
+.bb-league {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.bb-match {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 10px;
+  letter-spacing: -0.01em;
+}
+
+.bb-pick {
+  font-size: 1.55rem;
+  font-weight: 800;
+  color: var(--amber);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.bb-right {
+  text-align: center;
+  flex-shrink: 0;
+  min-width: 120px;
+}
+
+.bb-conf-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.bb-conf-num {
+  font-size: 2.6rem;
+  font-weight: 800;
+  color: var(--amber);
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bb-conf-bar {
+  height: 5px;
+  background: rgba(255,255,255,0.06);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.bb-conf-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--amber), rgba(224,168,48,0.5));
+  border-radius: 4px;
+  transition: width 0.8s ease;
+}
+
+.bb-footer {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(201,146,42,0.12);
+  font-size: 0.65rem;
+  color: var(--text-subtle);
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+/* ── Accumulator card ────────────────────────────────────────────────────────── */
+
+.acca-card {
+  border: 1px solid var(--amber-border);
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(201,146,42,0.05) 0%, var(--bg-card) 60%);
+  overflow: hidden;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.acca-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 24px;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  transition: background 0.15s;
+}
+
+.acca-row:hover { background: rgba(255,255,255,0.02); }
+
+.acca-num {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(201,146,42,0.12);
+  border: 1px solid var(--amber-border);
+  color: var(--amber);
+  font-size: 0.78rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.acca-details { flex: 1; min-width: 0; }
+
+.acca-match {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acca-pick-label {
+  font-size: 0.82rem;
+  color: var(--amber);
+  font-weight: 600;
+}
+
+.acca-league {
+  font-size: 0.65rem;
+  color: var(--text-subtle);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acca-conf {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--amber);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.acca-combined {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 24px;
+  background: rgba(201,146,42,0.07);
+  border-top: 1px solid var(--amber-border);
+}
+
+.acca-combined-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.acca-combined-num {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--amber);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .best-bet-card { padding: 24px 18px; }
+  .bb-body { flex-direction: column; gap: 20px; align-items: flex-start; }
+  .bb-right { width: 100%; display: flex; align-items: center; gap: 16px; text-align: left; }
+  .bb-conf-bar { flex: 1; margin-top: 0; }
+  .bb-conf-num { font-size: 1.9rem; }
+  .acca-row { padding: 14px 16px; }
+  .acca-combined { padding: 14px 16px; }
+}

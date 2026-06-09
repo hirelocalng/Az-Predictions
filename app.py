@@ -1364,6 +1364,7 @@ def health():
 
 _DAILY_TIPS_CACHE: dict = {"data": None, "ts": 0.0}
 _INTL_TIPS_CACHE:  dict = {"data": None, "ts": 0.0}
+_BEST_BET_CACHE:   dict = {"data": None, "ts": 0.0}
 
 
 @app.route("/api/intl/fixtures")
@@ -1406,6 +1407,124 @@ def daily_tips():
                             t.get('away_team','') or t.get('away',''),
                             (t.get('utc_kickoff','') or '')[:10]) not in done]
     return jsonify(active)
+
+
+@app.route('/api/best-bet')
+def best_bet_of_day():
+    """Return the single highest-confidence outcome and a 3-pick accumulator from all today's fixtures."""
+    now_ts = time.time()
+    if _BEST_BET_CACHE["data"] is not None and (now_ts - _BEST_BET_CACHE["ts"]) < _CACHE_TTL:
+        return jsonify(_BEST_BET_CACHE["data"])
+
+    # Warm club cache
+    if _CLUB_TIPS_CACHE["data"] is None or (now_ts - _CLUB_TIPS_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            tips = get_club_tips(_club_predict)
+            for t in tips: _save_prediction(t)
+            _CLUB_TIPS_CACHE["data"] = tips
+            _CLUB_TIPS_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            _log.warning('best-bet: club warm: %s', exc)
+            _CLUB_TIPS_CACHE.setdefault("data", [])
+
+    # Warm international cache
+    if _INTL_TIPS_CACHE["data"] is None or (now_ts - _INTL_TIPS_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            tips = get_intl_tips(_wc_predict)
+            for t in tips: _save_prediction(t)
+            _INTL_TIPS_CACHE["data"] = tips
+            _INTL_TIPS_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            _log.warning('best-bet: intl warm: %s', exc)
+            _INTL_TIPS_CACHE.setdefault("data", [])
+
+    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+
+    # Aggregate all sources; include today's WC fixtures
+    raw = list(_CLUB_TIPS_CACHE["data"] or []) + list(_INTL_TIPS_CACHE["data"] or [])
+    for f in _WC_FIXTURES:
+        if f.get('date', '') == today_str:
+            raw.append(f)
+
+    # Deduplicate by match_id
+    seen_ids = set()
+    unique_tips = []
+    for t in raw:
+        h   = t.get('home_team') or t.get('home', '')
+        a   = t.get('away_team') or t.get('away', '')
+        d   = (t.get('utc_kickoff') or '')[:10] or t.get('date', '')
+        mid = _match_key(h, a, d)
+        if mid not in seen_ids:
+            seen_ids.add(mid)
+            unique_tips.append(t)
+
+    # Build all outcome candidates
+    candidates = []
+    for t in unique_tips:
+        h      = t.get('home_team') or t.get('home', '')
+        a      = t.get('away_team') or t.get('away', '')
+        d      = (t.get('utc_kickoff') or '')[:10] or t.get('date', '')
+        mid    = _match_key(h, a, d)
+        lbl    = f"{h} vs {a}"
+        league = t.get('league') or t.get('competition', '')
+        res    = t.get('result', {})
+        ph, pd_, pa = res.get('home', 0), res.get('draw', 0), res.get('away', 0)
+        og  = t.get('over_goals',   0.5)
+        bt  = t.get('btts',         0.5)
+        oc  = t.get('over_corners', 0.5)
+        koff = t.get('utc_kickoff', '')
+
+        def _c(pick, prob, typ):
+            return {'match_id': mid, 'match': lbl, 'league': league,
+                    'pick': pick, 'prob': round(prob, 4), 'type': typ,
+                    'utc_kickoff': koff}
+
+        # Match result
+        res_prob = max(ph, pd_, pa)
+        if res_prob > 0:
+            res_lbl = (f"{h} Win" if res_prob == ph else
+                       f"{a} Win" if res_prob == pa else "Draw")
+            candidates.append(_c(res_lbl, res_prob, 'result'))
+
+        # Goals Over/Under 2.5
+        candidates.append(_c('Over 2.5 Goals'  if og >= 0.5 else 'Under 2.5 Goals',
+                              max(og, 1 - og), 'goals'))
+        # BTTS
+        candidates.append(_c('Both Teams to Score' if bt >= 0.5 else 'Both Teams Not to Score',
+                              max(bt, 1 - bt), 'btts'))
+        # Corners Over/Under 9.5
+        candidates.append(_c('Corners Over 9.5' if oc >= 0.5 else 'Corners Under 9.5',
+                              max(oc, 1 - oc), 'corners'))
+
+    if not candidates:
+        payload = {'best_bet': None, 'accumulator': [], 'combined_prob': 0.0}
+        _BEST_BET_CACHE.update(data=payload, ts=now_ts)
+        return jsonify(payload)
+
+    candidates.sort(key=lambda x: x['prob'], reverse=True)
+    best = candidates[0]
+
+    # Accumulator: top 3 picks from DIFFERENT matches
+    acca, seen_matches = [], set()
+    for c in candidates:
+        if c['match_id'] not in seen_matches:
+            acca.append(c)
+            seen_matches.add(c['match_id'])
+        if len(acca) == 3:
+            break
+
+    combined = 1.0
+    for pick in acca:
+        combined *= pick['prob']
+
+    payload = {
+        'best_bet':      best,
+        'accumulator':   acca,
+        'combined_prob': round(combined, 4),
+        'updated':       datetime.now(timezone.utc).isoformat(),
+    }
+    _BEST_BET_CACHE.update(data=payload, ts=now_ts)
+    return jsonify(payload)
 
 
 @app.route('/api/results')
@@ -1620,6 +1739,7 @@ def _refresh_caches():
     _INTL_TIPS_CACHE["ts"]  = 0.0
     _DAILY_TIPS_CACHE["ts"] = 0.0
     _CLUB_TIPS_CACHE["ts"]  = 0.0
+    _BEST_BET_CACHE["ts"]   = 0.0
     _log.info('Caches cleared — fresh fetch on next request')
 
 

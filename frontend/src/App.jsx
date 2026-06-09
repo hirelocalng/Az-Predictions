@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
+import BestBetSection from './components/BestBetSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 import ResultsSection from './components/ResultsSection.jsx'
 import LoginPage from './components/LoginPage.jsx'
@@ -71,6 +72,7 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
 
       <nav className="header-nav">
         {[
+          ['best-bet',   '⭐ Best Bet'],
           ['daily-tips', "Today's Tips"],
           ['worldcup',   'World Cup 2026'],
           ['intl',       'Internationals'],
@@ -108,7 +110,7 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ onDailyTips, onWC, onIntl, onClub, navigate }) {
+function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, navigate }) {
   return (
     <section className="hero">
       <div className="hero-eyebrow">AI-Powered Match Predictions</div>
@@ -122,7 +124,8 @@ function Hero({ onDailyTips, onWC, onIntl, onClub, navigate }) {
         World Cup 2026 forecasts, live internationals, and daily club tips.
       </p>
       <div className="hero-actions">
-        <button className="btn-primary" onClick={onDailyTips}>Today's Top 5</button>
+        <button className="btn-primary hero-bb-btn" onClick={onBestBet}>⭐ Best Bet Today</button>
+        <button className="btn-outline" onClick={onDailyTips}>Today's Tips</button>
         <button className="btn-outline" onClick={onWC}>World Cup 2026</button>
         <button className="btn-outline" onClick={onIntl}>Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
@@ -227,12 +230,14 @@ export default function App() {
 
           <main style={{ paddingTop: 60 }}>
             <Hero
+              onBestBet={() => { setActive('best-bet');   scrollTo('best-bet')   }}
               onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
               onWC={()        => { setActive('worldcup');   scrollTo('worldcup')   }}
               onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
               onClub={()      => { setActive('club');       scrollTo('club')       }}
               navigate={navigate}
             />
+            <BestBetSection />
             <div className="divider" />
             <DailyTipsSection />
             <div className="divider" />

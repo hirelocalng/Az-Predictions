@@ -6,6 +6,7 @@ Usage:
     python worldcup_predict.py  (interactive prompt)
 """
 
+import os
 import sys
 import math
 import difflib
@@ -20,9 +21,10 @@ warnings.filterwarnings('ignore')
 
 # --- Config ------------------------------------------------------------------
 
-DATA_PATH          = 'data/results.csv'
-RESULT_MODEL_PATH  = 'worldcup_result_model.pkl'
-GOALS_MODEL_PATH   = 'worldcup_goals_model.pkl'
+_BASE_DIR          = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH          = os.path.join(_BASE_DIR, 'data', 'results.csv')
+RESULT_MODEL_PATH  = os.path.join(_BASE_DIR, 'worldcup_result_model.pkl')
+GOALS_MODEL_PATH   = os.path.join(_BASE_DIR, 'worldcup_goals_model.pkl')
 FORM_WINDOW        = 10
 
 TOURNAMENT_IMPORTANCE = {

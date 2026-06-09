@@ -295,6 +295,7 @@ def _score_club_match(match, club_predict_fn):
     comp_name  = match.get("competition", {}).get("name", "")
     status     = _get_match_status(match)
     time_str   = _extract_time(match)
+    utc_iso    = _extract_utc_iso(match)
     home_crest = _extract_logo(match, "home")
     away_crest = _extract_logo(match, "away")
 
@@ -341,6 +342,7 @@ def _score_club_match(match, club_predict_fn):
         "home_crest":   home_crest,
         "away_crest":   away_crest,
         "time":         time_str,
+        "utc_kickoff":  utc_iso,
         "date_label":   "Live" if status in _LIVE_STATUSES else "Today",
         "status":       status,
         "result":       {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
@@ -624,35 +626,20 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
 
         # ── International / national-team match ───────────────────────────
         if is_intl:
-            pred = None
             try:
                 pred = wc_predict_fn(home_name, away_name, is_neutral=True)
             except Exception:
-                pass
+                pred = None
+            if not pred:
+                continue  # skip — never use club model for international matches
 
-            if pred:
-                ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
-                pg           = pred["over_goals"]
-                display_home = pred.get("resolved_home", home_name)
-                display_away = pred.get("resolved_away", away_name)
-                bet_lbl, bet_conf, overall = _best_bet(
-                    display_home, display_away, ph, pd_, pa, pg
-                )
-            else:
-                hs  = dict(_DEFAULT_STATS)
-                as_ = dict(_DEFAULT_STATS)
-                form5_h = round((hs["win"] * 3 + hs["draw"]) * 5)
-                form5_a = round((as_["win"] * 3 + as_["draw"]) * 5)
-                try:
-                    ph, pd_, pa, pg, pc = club_predict_fn(
-                        hs, as_, 0, form5_h, form5_a, 2.60, 3.10, 2.80, "E0"
-                    )
-                except Exception:
-                    continue
-                display_home, display_away = home_name, away_name
-                bet_lbl, bet_conf, overall = _best_bet(
-                    home_name, away_name, ph, pd_, pa, pg, pc
-                )
+            ph, pd_, pa = pred["home_win"], pred["draw"], pred["away_win"]
+            pg           = pred["over_goals"]
+            display_home = pred.get("resolved_home", home_name)
+            display_away = pred.get("resolved_away", away_name)
+            bet_lbl, bet_conf, overall = _best_bet(
+                display_home, display_away, ph, pd_, pa, pg
+            )
 
             if overall < _MIN_CONF:
                 continue

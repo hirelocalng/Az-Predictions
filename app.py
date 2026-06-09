@@ -383,13 +383,11 @@ def _migrate_json_to_db():
         print(f'DB migration error: {exc}', flush=True)
 
 
-# ── International prediction — copied verbatim from worldcup_predict.py ───────
-# Every constant, every helper, every formula is identical to the terminal tool.
-
-_WC_DATA_PATH         = os.path.join(_BASE_DIR, 'data', 'results.csv')
-_WC_RESULT_MODEL_PATH = os.path.join(_BASE_DIR, 'worldcup_result_model.pkl')
-_WC_GOALS_MODEL_PATH  = os.path.join(_BASE_DIR, 'worldcup_goals_model.pkl')
-_WC_FORM_WINDOW       = 10
+# ── International prediction ──────────────────────────────────────────────────
+# Single source of truth: worldcup_predict.py is authoritative for both the
+# terminal tool and the API.  Importing it here means they always agree.
+sys.path.insert(0, _BASE_DIR)
+from worldcup_predict import predict_match  # noqa: E402
 
 _TOURNAMENT_IMPORTANCE = {
     'FIFA World Cup':                            1.00,
@@ -644,77 +642,10 @@ def _api_corners_prob(home_gs: float, away_gs: float,
     return max(0.20, min(0.82, p))
 
 
-_PRED_MODELS = None   # (result_model, res_features, goals_model, goals_features)
-_PRED_DF     = None   # loaded DataFrame
-_ALL_TEAMS   = None   # sorted team list
-
-
-def predict_match(home_raw, away_raw, is_neutral=True,
-                  tournament='FIFA World Cup'):
-    """
-    Programmatic version of predict() — identical feature engineering, same
-    model calls, same probabilities. Returns a dict instead of printing.
-
-    Models and data are loaded once and cached globally for API throughput.
-
-    Returns
-    -------
-    dict  {home_win, draw, away_win, over_goals, btts, over_corners,
-           resolved_home, resolved_away}
-
-    Raises
-    ------
-    ValueError  if either team name cannot be resolved from the dataset.
-    """
-    global _PRED_MODELS, _PRED_DF, _ALL_TEAMS
-    if _PRED_MODELS is None:
-        _PRED_MODELS = _wc_load_models()
-    if _PRED_DF is None:
-        _PRED_DF   = _wc_load_data()
-        _ALL_TEAMS = sorted(set(
-            _PRED_DF['home_team'].tolist() + _PRED_DF['away_team'].tolist()
-        ))
-
-    result_model, res_features, goals_model, _ = _PRED_MODELS
-    df        = _PRED_DF
-    all_teams = _ALL_TEAMS
-
-    team_a = _wc_resolve_team(home_raw, all_teams)
-    team_b = _wc_resolve_team(away_raw, all_teams)
-
-    importance = _wc_get_importance(tournament)
-
-    home_form = _wc_get_team_form(df, team_a)
-    away_form = _wc_get_team_form(df, team_b)
-    h2h       = _wc_get_h2h(df, team_a, team_b)
-
-    home_form.update(_wc_get_major_form(df, team_a))
-    away_form.update(_wc_get_major_form(df, team_b))
-
-    X = _wc_build_feature_vector(home_form, away_form, h2h, res_features,
-                                  is_neutral=is_neutral,
-                                  tournament_importance=importance)
-
-    res_proba   = result_model.predict_proba(X)[0]   # [away_win, draw, home_win]
-    goals_proba = goals_model.predict_proba(X)[0]    # [under, over]
-
-    return {
-        'home_win':      float(res_proba[2]),
-        'draw':          float(res_proba[1]),
-        'away_win':      float(res_proba[0]),
-        'over_goals':    float(goals_proba[1]),
-        'btts':          _api_btts_prob(home_form['goals_scored'], away_form['goals_scored']),
-        'over_corners':  _api_corners_prob(
-                             home_form['goals_scored'], away_form['goals_scored'],
-                             home_form['goals_conceded'], away_form['goals_conceded']),
-        'resolved_home': team_a,
-        'resolved_away': team_b,
-    }
 
 
 # ── Fetch fixtures helpers ────────────────────────────────────────────────────
 
-sys.path.insert(0, os.path.dirname(__file__))
 try:
     from fetch_fixtures import get_daily_tips, get_club_tips, get_intl_tips
     print('fetch_fixtures imported OK', flush=True)
@@ -1884,12 +1815,18 @@ def serve(path):
 
 
 def _refresh_caches():
-    """Reset all prediction caches so next request fetches fresh data."""
+    """Reset all prediction caches and rebuild WC fixtures every 6h."""
+    global _WC_FIXTURES
     _INTL_TIPS_CACHE["ts"]  = 0.0
     _DAILY_TIPS_CACHE["ts"] = 0.0
     _CLUB_TIPS_CACHE["ts"]  = 0.0
     _BEST_BET_CACHE["ts"]   = 0.0
     _log.info('Caches cleared — fresh fetch on next request')
+    try:
+        _WC_FIXTURES = _build_wc_fixtures()
+        _log.info('WC fixtures refreshed (%d matches)', len(_WC_FIXTURES))
+    except Exception as _e:
+        _log.warning('WC fixtures refresh failed: %s', _e)
 
 
 # ── APScheduler — live update every 2 min + cache refresh every 6 h ──────────

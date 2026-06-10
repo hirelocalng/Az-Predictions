@@ -1,0 +1,140 @@
+{
+  "title": "FIFA World Cup 2026 \u2014 All 48 Qualified Teams with Monte Carlo Win Probability",
+  "subtitle": "Real FIFA Rankings (Jan 2026) + 50,000 Monte Carlo Tournament Simulations",
+  "description": "Complete dataset of all 48 teams qualified for the 2026 FIFA World Cup (USA, Canada, Mexico). Includes official FIFA rankings and points as of January 19, 2026, squad quality metrics, historical WC performance, and Monte Carlo simulation probabilities for each tournament stage.\n\nMonte Carlo methodology: 50,000 full tournament simulations. Each match outcome determined by Elo-style logistic probability based on composite team strength. Group stage: round-robin with 32 teams advancing (top 2 per group + best 8 third-place). Knockout: single elimination R32 \u2192 R16 \u2192 QF \u2192 SF \u2192 Final \u2192 Champion.\n\nAll win probabilities sum to 100%.",
+  "keywords": [
+    "fifa",
+    "world cup 2026",
+    "football",
+    "soccer",
+    "monte carlo",
+    "sports analytics",
+    "team ratings",
+    "prediction",
+    "machine learning"
+  ],
+  "licenses": [
+    {
+      "name": "CC BY 4.0"
+    }
+  ],
+  "columns": [
+    {
+      "name": "team_name",
+      "description": "Country/team name"
+    },
+    {
+      "name": "confederation",
+      "description": "FIFA confederation (UEFA/CONMEBOL/CAF/AFC/CONCACAF/OFC/TBD)"
+    },
+    {
+      "name": "is_host",
+      "description": "1 if host nation (USA/Canada/Mexico), 0 otherwise"
+    },
+    {
+      "name": "fifa_ranking_jan2026",
+      "description": "Official FIFA ranking as of January 19, 2026"
+    },
+    {
+      "name": "fifa_points_jan2026",
+      "description": "Official FIFA/Coca-Cola ranking points (Jan 19, 2026)"
+    },
+    {
+      "name": "world_cup_titles",
+      "description": "Number of FIFA World Cup titles won"
+    },
+    {
+      "name": "world_cup_finals",
+      "description": "Number of World Cup final appearances"
+    },
+    {
+      "name": "world_cup_appearances",
+      "description": "Total World Cup tournament appearances"
+    },
+    {
+      "name": "star_player_rating",
+      "description": "Best player quality rating (0-10 scale)"
+    },
+    {
+      "name": "avg_player_age",
+      "description": "Average age of squad players"
+    },
+    {
+      "name": "goalkeeper_rating",
+      "description": "Starting goalkeeper quality (0-10 scale)"
+    },
+    {
+      "name": "squad_depth_score",
+      "description": "Bench/squad depth quality (0-10 scale)"
+    },
+    {
+      "name": "coach_experience_tournaments",
+      "description": "Number of major tournaments managed by head coach"
+    },
+    {
+      "name": "h2h_vs_top10_winrate",
+      "description": "Historical win rate against FIFA top-10 ranked teams (0-1)"
+    },
+    {
+      "name": "knockout_stage_reach_rate",
+      "description": "Historical rate of reaching knockout stage in World Cups (0-1)"
+    },
+    {
+      "name": "historical_score",
+      "description": "Calculated: (titles\u00d715)+(finals\u00d76)+(apps\u00d71.5)+(ko_rate\u00d712)"
+    },
+    {
+      "name": "squad_score",
+      "description": "Calculated: weighted composite of star/gk/depth/coach ratings"
+    },
+    {
+      "name": "composite_strength",
+      "description": "Final weighted strength score (0-100) used in MC simulation"
+    },
+    {
+      "name": "mc_group_stage_pct",
+      "description": "Monte Carlo %: how often team advanced from group stage (50,000 sims)"
+    },
+    {
+      "name": "mc_r16_pct",
+      "description": "Monte Carlo %: how often team reached Round of 16"
+    },
+    {
+      "name": "mc_quarterfinal_pct",
+      "description": "Monte Carlo %: how often team reached Quarter-Final"
+    },
+    {
+      "name": "mc_semifinal_pct",
+      "description": "Monte Carlo %: how often team reached Semi-Final"
+    },
+    {
+      "name": "mc_final_pct",
+      "description": "Monte Carlo %: how often team reached the Final"
+    },
+    {
+      "name": "mc_win_probability_pct",
+      "description": "Monte Carlo %: how often team won the tournament. All 48 sum to ~100%"
+    },
+    {
+      "name": "is_tbd",
+      "description": "1 if team not yet confirmed (playoff spot), 0 if confirmed qualifier"
+    }
+  ],
+  "data_sources": [
+    "FIFA/Coca-Cola Men's World Ranking \u2014 January 19, 2026 (Official, via ESPN)",
+    "FIFA World Cup historical records (verified)",
+    "Host nation confirmations: USA, Canada, Mexico (Official FIFA)",
+    "Squad quality ratings: expert estimation based on current squad analysis"
+  ],
+  "simulation_details": {
+    "method": "Monte Carlo",
+    "simulations": 50000,
+    "match_model": "Logistic probability: P(A beats B) = 1 / (1 + exp(-(sA - sB) / 6.0))",
+    "group_format": "12 groups of 4. Top 2 + best 8 third-place = 32 advance",
+    "knockout_format": "Single elimination: R32 \u2192 R16 \u2192 QF \u2192 SF \u2192 Final",
+    "draw_rate": "30% matches end in draw during group stage",
+    "host_boost": "Host nations receive 8% strength multiplier"
+  },
+  "created": "March 2026",
+  "version": "1.0"
+}

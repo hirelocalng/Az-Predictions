@@ -1,0 +1,10 @@
+column,weight_pct,description
+fifa_points_jan2026,28.0,Current official FIFA rating — most reliable measure of team quality
+star_player_rating,15.0,Best player quality — decisive in knockout stages
+goalkeeper_rating,12.0,Most impactful single position — crucial in penalty shootouts
+historical_score,12.0,WC pedigree: titles × 15 + finals × 6 + appearances × 1.5 + ko_rate × 12
+squad_depth_score,10.0,Bench quality — 7 matches over 30 days requires squad rotation
+h2h_vs_top10_winrate,8.0,Proven record against elite teams — separates contenders
+coach_experience_tournaments,7.0,Tactical expertise in major tournaments
+avg_player_age,5.0,Peak football age ~27.5 — penalizes too young or too old squads
+is_host,3.0,"Home crowd, no travel, familiar conditions (+8% strength boost)"

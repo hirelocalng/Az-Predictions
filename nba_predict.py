@@ -28,10 +28,11 @@ WNBA_FORM_CACHE  = 'data/wnba_team_form_cache.csv'
 NBA_OU_LINE  = 220.5
 WNBA_OU_LINE = 170.5
 
-BDL_BASE     = 'https://www.balldontlie.io/api/v1'
-TSDB_BASE    = 'https://www.thesportsdb.com/api/v1/json/3'
-WNBA_TSDB_ID = '4328'
-NBA_TSDB_ID  = '4387'
+BDL_BASE      = 'https://www.balldontlie.io/api/v1'
+BDL_WNBA_BASE = 'https://api.balldontlie.io/wnba/v1'
+TSDB_BASE     = 'https://www.thesportsdb.com/api/v1/json/3'
+WNBA_TSDB_ID  = '4328'
+NBA_TSDB_ID   = '4387'
 
 # ─── Model loading ────────────────────────────────────────────────────────────
 _NBA_RES = _NBA_OU = _WNBA_RES = _WNBA_OU = None
@@ -135,6 +136,24 @@ def _bdl_get(path, params=None, retries=2):
     for i in range(retries):
         try:
             r = requests.get(f'{BDL_BASE}/{path}', params=params, timeout=12)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            if i == retries - 1:
+                return {}
+            time.sleep(1)
+    return {}
+
+
+def _bdl_wnba_get(path, params=None, retries=2):
+    """GET from BallDontLie WNBA API (api.balldontlie.io/wnba/v1).
+    Uses BDL_API_KEY env var if set."""
+    api_key = os.environ.get('BDL_API_KEY', '')
+    headers = {'Authorization': api_key} if api_key else {}
+    for i in range(retries):
+        try:
+            r = requests.get(f'{BDL_WNBA_BASE}/{path}', params=params,
+                             headers=headers, timeout=12)
             r.raise_for_status()
             return r.json()
         except Exception:
@@ -476,18 +495,53 @@ def get_nba_fixtures(start_date=None, end_date=None):
 
 
 def get_wnba_fixtures(start_date=None, end_date=None):
-    """Return WNBA games from start_date through end_date (default: today + 3 days).
-    TheSportsDB only supports single-day queries, so we loop per day."""
+    """Return WNBA games for start_date through end_date.
+    Primary: BallDontLie WNBA API (api.balldontlie.io/wnba/v1).
+    Fallback: TheSportsDB l=4328 if BDL returns nothing."""
     from datetime import date as _date, timedelta as _td, datetime as _dtt
     if not start_date:
         start_date = _date.today().strftime('%Y-%m-%d')
     if not end_date:
         end_date = (_date.today() + _td(days=3)).strftime('%Y-%m-%d')
-    start = _dtt.strptime(start_date, '%Y-%m-%d').date()
-    end   = _dtt.strptime(end_date,   '%Y-%m-%d').date()
+
+    # ── Primary: BallDontLie WNBA API ────────────────────────────────────────
+    data = _bdl_wnba_get('games', {
+        'start_date': start_date, 'end_date': end_date, 'per_page': 100,
+    })
     result = []
+    for g in data.get('data', []):
+        raw_date  = g.get('date', start_date)
+        game_date = raw_date[:10] if raw_date else start_date
+        home = g.get('home_team', {}).get('full_name', '')
+        away = g.get('visitor_team', {}).get('full_name', '')
+        home_abbr = (g.get('home_team', {}).get('abbreviation')
+                     or _wnba_abbr(home))
+        away_abbr = (g.get('visitor_team', {}).get('abbreviation')
+                     or _wnba_abbr(away))
+        hs  = g.get('home_team_score')
+        as_ = g.get('visitor_team_score')
+        result.append({
+            'id':         g.get('id'),
+            'home_team':  home,
+            'away_team':  away,
+            'home_abbr':  home_abbr,
+            'away_abbr':  away_abbr,
+            'home_score': int(hs)  if hs  is not None and str(hs).strip()  not in ('', 'None') else None,
+            'away_score': int(as_) if as_ is not None and str(as_).strip() not in ('', 'None') else None,
+            'status':     g.get('status', ''),
+            'time':       g.get('time', ''),
+            'date':       game_date,
+            'postseason': g.get('postseason', False),
+        })
+    if result:
+        result.sort(key=lambda g: g['date'])
+        return result
+
+    # ── Fallback: TheSportsDB per-day loop ────────────────────────────────────
+    start = _dtt.strptime(start_date, '%Y-%m-%d').date()
+    end_  = _dtt.strptime(end_date,   '%Y-%m-%d').date()
     d = start
-    while d <= end:
+    while d <= end_:
         date_str = d.strftime('%Y-%m-%d')
         try:
             r = requests.get(
@@ -498,12 +552,14 @@ def get_wnba_fixtures(start_date=None, end_date=None):
             for e in (r.json().get('events') or []):
                 hs  = e.get('intHomeScore')
                 as_ = e.get('intAwayScore')
+                home = e.get('strHomeTeam', '')
+                away = e.get('strAwayTeam', '')
                 result.append({
                     'id':         e.get('idEvent'),
-                    'home_team':  e.get('strHomeTeam', ''),
-                    'away_team':  e.get('strAwayTeam', ''),
-                    'home_abbr':  _wnba_abbr(e.get('strHomeTeam', '')),
-                    'away_abbr':  _wnba_abbr(e.get('strAwayTeam', '')),
+                    'home_team':  home,
+                    'away_team':  away,
+                    'home_abbr':  _wnba_abbr(home),
+                    'away_abbr':  _wnba_abbr(away),
                     'home_score': int(hs)  if hs  and str(hs).strip()  not in ('', 'None') else None,
                     'away_score': int(as_) if as_ and str(as_).strip() not in ('', 'None') else None,
                     'status':     e.get('strStatus', ''),
@@ -514,6 +570,7 @@ def get_wnba_fixtures(start_date=None, end_date=None):
         except Exception:
             pass
         d += _td(days=1)
+    result.sort(key=lambda g: g['date'])
     return result
 
 

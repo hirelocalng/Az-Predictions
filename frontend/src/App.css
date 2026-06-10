@@ -1195,6 +1195,49 @@ body::after {
   border-radius: 999px;
 }
 
+/* Sport sub-section (NBA / WNBA) */
+.bball-sport-section  { margin-bottom: 0; }
+.bball-sport-header   {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 22px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.bball-sport-name   {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.bball-sport-count  {
+  font-size: 0.7rem;
+  color: var(--text-subtle);
+  background: var(--bg-card-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-weight: 600;
+}
+.bball-sport-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 36px 0;
+}
+
+/* Card time (kickoff in local TZ) */
+.bball-card-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bball-card-time {
+  font-size: 0.68rem;
+  color: var(--text-subtle);
+  font-weight: 500;
+}
+
 /* Day grouping */
 .bball-days         { display: flex; flex-direction: column; gap: 32px; }
 .bball-day-section  {}

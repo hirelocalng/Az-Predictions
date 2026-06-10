@@ -1,6 +1,45 @@
 import { useState, useEffect } from 'react'
 
-// ── Probability bar (home/away, no draw) ──────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function dateLabel(dateStr) {
+  const now     = new Date()
+  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const gameMs  = new Date(dateStr + 'T00:00:00Z').getTime()
+  const diff    = Math.round((gameMs - todayMs) / 86_400_000)
+  if (diff === 0) return 'Today'
+  if (diff === 1) return 'Tomorrow'
+  const d = new Date(dateStr + 'T00:00:00Z')
+  const weekday = d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' })
+  const month   = d.toLocaleDateString('en-US', { month: 'short',  timeZone: 'UTC' })
+  return `${weekday} ${month} ${d.getUTCDate()}`
+}
+
+function groupByDate(games) {
+  const map = {}
+  for (const g of games) {
+    const d = g.date || 'unknown'
+    if (!map[d]) map[d] = []
+    map[d].push(g)
+  }
+  return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
+}
+
+/** Convert UTC "HH:MM" time + date string to user's local time string. */
+function localKickoff(dateStr, timeStr) {
+  if (!timeStr || typeof timeStr !== 'string') return null
+  const m = timeStr.match(/^(\d{1,2}):(\d{2})$/)
+  if (!m) return null
+  try {
+    const dt = new Date(`${dateStr}T${m[1].padStart(2, '0')}:${m[2]}:00Z`)
+    if (isNaN(dt.getTime())) return null
+    return new Intl.DateTimeFormat([], {
+      hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+    }).format(dt)
+  } catch { return null }
+}
+
+// ── Probability bar ───────────────────────────────────────────────────────────
 
 function WinBar({ homeTeam, awayTeam, homePct, awayPct }) {
   const homeW = Math.round(homePct)
@@ -28,50 +67,47 @@ function WinBar({ homeTeam, awayTeam, homePct, awayPct }) {
 // ── Single game card ──────────────────────────────────────────────────────────
 
 function GameCard({ game }) {
-  const homePct   = game.result?.home * 100 || game.home_win_pct || 50
-  const awayPct   = game.result?.away * 100 || game.away_win_pct || 50
-  const overPct   = game.over_total * 100 || game.over_pct || 50
-  const ouLine    = game.ou_line || (game.sport === 'wnba' ? 170.5 : 220.5)
-  const ouLabel   = overPct > 50 ? `Over ${ouLine}` : `Under ${ouLine}`
-  const ouConf    = overPct > 50 ? overPct : (100 - overPct)
-  const bestBet   = game.best_bet || game.predicted_winner || ''
+  const homePct    = game.result?.home * 100 || game.home_win_pct || 50
+  const awayPct    = game.result?.away * 100 || game.away_win_pct || 50
+  const overPct    = game.over_total * 100 || game.over_pct || 50
+  const ouLine     = game.ou_line || (game.sport === 'wnba' ? 170.5 : 220.5)
+  const ouLabel    = overPct > 50 ? `Over ${ouLine}` : `Under ${ouLine}`
+  const ouConf     = overPct > 50 ? overPct : (100 - overPct)
+  const bestBet    = game.best_bet || game.predicted_winner || ''
   const bestBetPct = game.best_bet_type === 'ou' ? ouConf : Math.max(homePct, awayPct)
 
   const status  = (game.status || '').toLowerCase()
-  const isLive  = status.includes('progress') || status.includes('half') || status === 'live'
+  const isLive  = status.includes('progress') || status.includes('half') || status === 'live' || status === 'inprogress'
   const isDone  = status === 'final' || status === 'ft' || status.includes('final')
   const hasSco  = game.home_score != null && game.away_score != null
+  const kickoff = localKickoff(game.date, game.time)
 
-  // Logo fallback: render initials if image errors
   function Logo({ src, abbr, alt }) {
     const [err, setErr] = useState(false)
     if (err || !src) {
-      return (
-        <div className="bball-logo-fallback">
-          {abbr?.slice(0, 3) || alt?.slice(0, 3) || '—'}
-        </div>
-      )
+      return <div className="bball-logo-fallback">{abbr?.slice(0, 3) || alt?.slice(0, 3) || '—'}</div>
     }
     return (
-      <img
-        src={src} alt={alt}
-        className="bball-logo"
-        onError={() => setErr(true)}
-        loading="lazy"
-      />
+      <img src={src} alt={alt} className="bball-logo"
+           onError={() => setErr(true)} loading="lazy" />
     )
   }
 
   return (
     <div className={`bball-card${isDone ? ' bball-done' : isLive ? ' bball-live' : ''}`}>
-      {/* Header row */}
+      {/* Header */}
       <div className="bball-card-header">
         <span className="bball-league">{game.competition}</span>
-        {isLive && <span className="bball-live-badge">LIVE</span>}
-        {isDone && <span className="bball-done-badge">FINAL</span>}
+        <div className="bball-card-header-right">
+          {kickoff && !isLive && !isDone && (
+            <span className="bball-card-time">{kickoff}</span>
+          )}
+          {isLive && <span className="bball-live-badge">LIVE</span>}
+          {isDone && <span className="bball-done-badge">FINAL</span>}
+        </div>
       </div>
 
-      {/* Teams row */}
+      {/* Teams */}
       <div className="bball-teams">
         <div className="bball-team home">
           <Logo src={game.home_logo} abbr={game.home_abbr} alt={game.home_team} />
@@ -87,12 +123,10 @@ function GameCard({ game }) {
       </div>
 
       {/* Win probability bar */}
-      <WinBar
-        homeTeam={game.home_team} awayTeam={game.away_team}
-        homePct={homePct} awayPct={awayPct}
-      />
+      <WinBar homeTeam={game.home_team} awayTeam={game.away_team}
+              homePct={homePct} awayPct={awayPct} />
 
-      {/* Predictions row */}
+      {/* Predictions */}
       <div className="bball-preds">
         <div className="bball-pred-item">
           <span className="bball-pred-label">Winner</span>
@@ -107,7 +141,7 @@ function GameCard({ game }) {
         </div>
       </div>
 
-      {/* Best bet badge */}
+      {/* Best bet */}
       {bestBet && (
         <div className="bball-best-bet">
           <span className="bball-bb-star">★</span>
@@ -120,68 +154,70 @@ function GameCard({ game }) {
   )
 }
 
-// ── Loading skeleton ──────────────────────────────────────────────────────────
+// ── Sub-components ────────────────────────────────────────────────────────────
 
 function BballSkeleton() {
   return (
     <div className="bball-grid">
-      {[1, 2, 3].map(i => (
-        <div key={i} className="bball-card bball-skel shimmer" />
-      ))}
+      {[1, 2, 3].map(i => <div key={i} className="bball-card bball-skel shimmer" />)}
     </div>
   )
 }
 
-// ── Date helpers ─────────────────────────────────────────────────────────────
-
-function dateLabel(dateStr) {
-  const now     = new Date()
-  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
-  const gameMs  = new Date(dateStr + 'T00:00:00Z').getTime()
-  const diff    = Math.round((gameMs - todayMs) / 86_400_000)
-  if (diff === 0) return 'Today'
-  if (diff === 1) return 'Tomorrow'
-  const d = new Date(dateStr + 'T00:00:00Z')
-  const weekday = d.toLocaleDateString('en-US', { weekday: 'long',  timeZone: 'UTC' })
-  const month   = d.toLocaleDateString('en-US', { month: 'short',   timeZone: 'UTC' })
-  return `${weekday} ${month} ${d.getUTCDate()}`
-}
-
-function groupByDate(games) {
-  const map = {}
-  for (const g of games) {
-    const d = g.date || 'unknown'
-    if (!map[d]) map[d] = []
-    map[d].push(g)
-  }
-  return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
-}
-
-// ── Empty state ───────────────────────────────────────────────────────────────
-
 function Empty({ sport }) {
-  const label = sport === 'nba' ? 'NBA' : 'WNBA'
   return (
     <div className="bball-empty">
       <div className="bball-empty-icon">🏀</div>
-      <p>No {label} games in the next 4 days — check back soon.</p>
+      <p>No {sport === 'nba' ? 'NBA' : 'WNBA'} games in the next 4 days — check back soon.</p>
+    </div>
+  )
+}
+
+function SportSection({ id, title, games, err }) {
+  const loading = games === null && !err
+  return (
+    <div className="bball-sport-section" id={id}>
+      <div className="bball-sport-header">
+        <span className="bball-sport-name">🏀 {title}</span>
+        {games && games.length > 0 && (
+          <span className="bball-sport-count">{games.length} game{games.length !== 1 ? 's' : ''}</span>
+        )}
+      </div>
+
+      {loading && <BballSkeleton />}
+
+      {err && (
+        <div className="bball-empty">
+          <div className="bball-empty-icon">⚠</div>
+          <p>Could not load {title} games — {err}</p>
+        </div>
+      )}
+
+      {!loading && !err && games?.length === 0 && <Empty sport={id} />}
+
+      {!loading && !err && games?.length > 0 && (
+        <div className="bball-days">
+          {groupByDate(games).map(([date, dayGames]) => (
+            <div key={date} className="bball-day-section">
+              <div className="bball-day-header">{dateLabel(date)}</div>
+              <div className="bball-grid">
+                {dayGames.map((g, i) => <GameCard key={g.id || i} game={g} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Main section ──────────────────────────────────────────────────────────────
 
-export default function BasketballSection({ activeNav }) {
-  const [tab,      setTab]      = useState('nba')
-
-  useEffect(() => {
-    if (activeNav === 'nba' || activeNav === 'wnba') setTab(activeNav)
-  }, [activeNav])
-
-  const [nbaGames, setNbaGames] = useState(null)
-  const [wnbaGames,setWnbaGames]= useState(null)
-  const [nbaErr,   setNbaErr]   = useState(null)
-  const [wnbaErr,  setWnbaErr]  = useState(null)
+export default function BasketballSection() {
+  const [nbaGames,  setNbaGames]  = useState(null)
+  const [wnbaGames, setWnbaGames] = useState(null)
+  const [nbaErr,    setNbaErr]    = useState(null)
+  const [wnbaErr,   setWnbaErr]   = useState(null)
 
   useEffect(() => {
     fetch('/api/nba/fixtures')
@@ -197,9 +233,7 @@ export default function BasketballSection({ activeNav }) {
       .catch(e => setWnbaErr(e.message))
   }, [])
 
-  const games   = tab === 'nba' ? nbaGames : wnbaGames
-  const err     = tab === 'nba' ? nbaErr   : wnbaErr
-  const loading = games === null && !err
+  const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
 
   return (
     <section className="section" id="basketball">
@@ -210,54 +244,24 @@ export default function BasketballSection({ activeNav }) {
         </h2>
       </div>
 
-      {/* Sport tabs */}
+      {/* Quick-jump buttons */}
       <div className="bball-tabs">
-        <button
-          className={`bball-tab${tab === 'nba' ? ' active' : ''}`}
-          onClick={() => setTab('nba')}
-        >
+        <button className="bball-tab" onClick={() => scrollTo('nba-section')}>
           🏀 NBA
         </button>
-        <button
-          className={`bball-tab${tab === 'wnba' ? ' active' : ''}`}
-          onClick={() => setTab('wnba')}
-        >
+        <button className="bball-tab" onClick={() => scrollTo('wnba-section')}>
           🏀 WNBA
         </button>
       </div>
 
+      <SportSection id="nba-section"  title="NBA"  games={nbaGames}  err={nbaErr} />
 
+      <div className="bball-sport-divider" />
 
-      {loading && <BballSkeleton />}
-
-      {err && (
-        <div className="bball-empty">
-          <div className="bball-empty-icon">⚠</div>
-          <p>Could not load {tab.toUpperCase()} games — {err}</p>
-        </div>
-      )}
-
-      {!loading && !err && games?.length === 0 && <Empty sport={tab} />}
-
-      {!loading && !err && games?.length > 0 && (
-        <div className="bball-days">
-          {groupByDate(games).map(([date, dayGames]) => (
-            <div key={date} className="bball-day-section">
-              <div className="bball-day-header">{dateLabel(date)}</div>
-              <div className="bball-grid">
-                {dayGames.map((g, i) => (
-                  <GameCard key={g.id || i} game={g} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      <SportSection id="wnba-section" title="WNBA" games={wnbaGames} err={wnbaErr} />
 
       <p className="footer-text">
-        {tab === 'nba'
-          ? 'NBA data via BallDontLie API · predictions updated every 10 minutes'
-          : 'WNBA fixtures via TheSportsDB · predictions updated every 10 minutes'}
+        NBA via TheSportsDB · WNBA via BallDontLie · predictions updated every 10 minutes
       </p>
     </section>
   )

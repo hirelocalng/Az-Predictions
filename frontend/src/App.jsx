@@ -86,7 +86,8 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
             className={`nav-btn${active === id ? ' active' : ''}`}
             onClick={() => {
               setActive(id)
-              scrollTo(id === 'nba' || id === 'wnba' ? 'basketball' : id)
+              const target = id === 'nba' ? 'nba-section' : id === 'wnba' ? 'wnba-section' : id
+              scrollTo(target)
             }}>
             {label}
           </button>
@@ -247,7 +248,7 @@ export default function App() {
             <div className="divider" />
             <IntlSection />
             <div className="divider" />
-            <BasketballSection activeNav={active} />
+            <BasketballSection />
             <div className="divider" />
             <ClubSection />
             <div className="divider" />

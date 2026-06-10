@@ -11,13 +11,15 @@ function StatCard({ value, label, sub, color }) {
 }
 
 function SubChip({ label, value, status }) {
-  const cls = status === 'WON' ? 'won' : status === 'LOST' ? 'lost' : 'na'
-  const icon = status === 'WON' ? '✅' : status === 'LOST' ? '❌' : '—'
+  const cls  = status === 'WON' ? 'won' : status === 'LOST' ? 'lost' : 'na'
+  const icon = status === 'WON' ? '✅' : status === 'LOST' ? '❌' : null
   return (
     <span className={`res-sub-chip ${cls}`}>
       <span className="res-sub-label">{label}</span>
       <span className="res-sub-val">{value}</span>
-      <span className="res-sub-icon">{icon}</span>
+      {icon
+        ? <span className="res-sub-icon">{icon}</span>
+        : <span className="res-sub-nodata">No data</span>}
     </span>
   )
 }

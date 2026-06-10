@@ -642,9 +642,10 @@ body::after {
 .res-sub-chip.won  { background: var(--green-dim); color: var(--green); border-color: var(--green-border); }
 .res-sub-chip.lost { background: var(--red-dim);   color: var(--red);   border-color: rgba(255,77,109,.25); }
 .res-sub-chip.na   { background: rgba(255,255,255,.04); color: var(--text-muted); border-color: var(--border); }
-.res-sub-label { text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.75; }
-.res-sub-val   { font-weight: 700; }
-.res-sub-icon  { font-size: 0.7rem; }
+.res-sub-label   { text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.75; }
+.res-sub-val     { font-weight: 700; }
+.res-sub-icon    { font-size: 0.7rem; }
+.res-sub-nodata  { font-size: 0.6rem; opacity: 0.55; font-style: italic; font-weight: 400; }
 
 .res-empty { text-align: center; padding: 60px 24px; color: var(--text-muted); }
 .res-empty-icon { font-size: 2.4rem; margin-bottom: 12px; }

@@ -165,6 +165,7 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_home_score INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_away_score INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_minute VARCHAR(10)",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS actual_corners INTEGER",
             ]:
                 cur.execute(_col)
         print('DB init: all tables ready (predictions, users, sessions) ✓', flush=True)
@@ -260,7 +261,7 @@ def _get_history():
                     SELECT match_id, home_team, away_team, match_date, match_time,
                            competition, predicted_winner, predicted_goals,
                            predicted_btts, predicted_corners,
-                           actual_home_score, actual_away_score,
+                           actual_home_score, actual_away_score, actual_corners,
                            result_status, kickoff_utc, created_at
                     FROM predictions
                     ORDER BY match_date DESC, created_at DESC
@@ -742,8 +743,30 @@ _TSDB_NOT_DONE = frozenset({
 })
 
 
+_TSDB_STATS_URL = 'https://www.thesportsdb.com/api/v1/json/3/lookupevenstats.php'
+
+
+def _fetch_tsdb_corners(event_id):
+    """Return total corners for a TheSportsDB event ID, or None."""
+    import requests as _req
+    try:
+        r = _req.get(_TSDB_STATS_URL, params={'id': event_id}, timeout=8)
+        if r.status_code != 200:
+            return None
+        stats = r.json().get('eventstats') or []
+        for s in stats:
+            if 'corner' in (s.get('strStat') or '').lower():
+                try:
+                    return int(s.get('intHome', 0)) + int(s.get('intAway', 0))
+                except (ValueError, TypeError):
+                    pass
+    except Exception:
+        pass
+    return None
+
+
 def _fetch_tsdb_result(home_team, away_team, match_date):
-    """Return (home_score, away_score) from TheSportsDB or None if not found."""
+    """Return (home_score, away_score, corners) from TheSportsDB or None if not found."""
     import requests as _req
     try:
         r = _req.get(_TSDB_URL, params={'d': match_date, 's': 'Soccer'}, timeout=10)
@@ -769,10 +792,18 @@ def _fetch_tsdb_result(home_team, away_team, match_date):
                 continue
             eh = ev.get('strHomeTeam', '')
             ea = ev.get('strAwayTeam', '')
+            matched = False
+            swapped = False
             if _team_similar(eh, home_team) and _team_similar(ea, away_team):
-                return hs, as_
-            if _team_similar(eh, away_team) and _team_similar(ea, home_team):
-                return as_, hs
+                matched = True
+            elif _team_similar(eh, away_team) and _team_similar(ea, home_team):
+                matched = True
+                swapped = True
+            if matched:
+                corners = _fetch_tsdb_corners(ev.get('idEvent'))
+                if swapped:
+                    return as_, hs, corners
+                return hs, as_, corners
     except Exception as exc:
         _log.warning('TSDB lookup failed: %s', exc)
     return None
@@ -783,7 +814,7 @@ _FD_RESULT_KEY = '118333be3eb84d0ca4e10740f6d62255'
 
 
 def _fetch_fd_result(home_team, away_team, match_date):
-    """Return (home_score, away_score) from football-data.org or None."""
+    """Return (home_score, away_score, corners=None) from football-data.org or None."""
     import requests as _req
     try:
         r = _req.get(
@@ -804,16 +835,25 @@ def _fetch_fd_result(home_team, away_team, match_date):
             hn = (m.get('homeTeam') or {}).get('name', '')
             an = (m.get('awayTeam') or {}).get('name', '')
             if _team_similar(hn, home_team) and _team_similar(an, away_team):
-                return int(hs), int(as_)
+                return int(hs), int(as_), None
             if _team_similar(hn, away_team) and _team_similar(an, home_team):
-                return int(as_), int(hs)
+                return int(as_), int(hs), None
     except Exception as exc:
         _log.warning('FD result lookup failed: %s', exc)
     return None
 
 
+def _fetch_espn_result(home_team, away_team):
+    """Return (home_score, away_score, corners) from ESPN if match is fully finished, else None."""
+    espn = _fetch_espn_events()
+    ev   = _espn_match(espn, home_team, away_team)
+    if ev and ev.get('espn_status') in _ESPN_DONE:
+        return ev['home_score'], ev['away_score'], ev.get('corners')
+    return None
+
+
 def _get_result(home_team, away_team, match_date):
-    """Try every result source in priority order; return first match found."""
+    """Try every result source; return (home_score, away_score, corners) or None."""
     r = _fetch_tsdb_result(home_team, away_team, match_date)
     if r:
         return r
@@ -867,9 +907,19 @@ def _sub_results(pred):
         actual_btts   = hs > 0 and as_ > 0
         sub['btts'] = 'WON' if predicted_yes == actual_btts else 'LOST'
 
-    # Corners — no actual corner data stored; mark as unverifiable
-    if pred.get('predicted_corners'):
-        sub['corners'] = None
+    # Corners
+    pc = (pred.get('predicted_corners') or '').lower()
+    if pc:
+        actual_c = pred.get('actual_corners')
+        if actual_c is not None:
+            predicted_over = 'over' in pc
+            try:
+                thresh = float(pc.split()[1])
+            except (IndexError, ValueError):
+                thresh = 9.5
+            sub['corners'] = 'WON' if predicted_over == (actual_c > thresh) else 'LOST'
+        else:
+            sub['corners'] = None   # prediction exists but no data available
 
     return sub
 
@@ -933,15 +983,17 @@ def _check_pending_results():
                     result = _get_result(home, away, match_date)
                     if result is None:
                         continue
-                    hs, as_ = result
+                    hs, as_, corners = result
                     status  = _resolve_result(pw or '', home or '', away or '', hs, as_)
                     cur.execute("""
                         UPDATE predictions
                         SET actual_home_score=%s, actual_away_score=%s,
+                            actual_corners=%s,
                             result_status=%s, match_status='FINISHED'
                         WHERE match_id=%s
-                    """, (hs, as_, status, mid))
-                    _log.info('Result: %s %d-%d %s → %s', home, hs, as_, away, status)
+                    """, (hs, as_, corners, status, mid))
+                    _log.info('Result: %s %d-%d %s → %s (corners=%s)',
+                              home, hs, as_, away, status, corners)
                     resolved += 1
                 _log.info('Results check done: %d resolved', resolved)
                 return
@@ -971,15 +1023,18 @@ def _check_pending_results():
             result = _get_result(pred['home_team'], pred['away_team'], match_date)
             if result is None:
                 continue
-            hs, as_ = result
+            hs, as_, corners = result
             pred['actual_home_score'] = hs
             pred['actual_away_score'] = as_
+            if corners is not None:
+                pred['actual_corners'] = corners
             pred['result_status'] = _resolve_result(
                 pred.get('predicted_winner', ''),
                 pred['home_team'], pred['away_team'], hs, as_)
             changed = True
-            _log.info('JSON result: %s %d-%d %s → %s',
-                      pred['home_team'], hs, as_, pred['away_team'], pred['result_status'])
+            _log.info('JSON result: %s %d-%d %s → %s (corners=%s)',
+                      pred['home_team'], hs, as_, pred['away_team'],
+                      pred['result_status'], corners)
         if changed:
             _write_raw_history(data)
 
@@ -1019,10 +1074,20 @@ def _fetch_espn_events():
                 hs  = int(hc.get('score') or 0)
                 as_ = int(ac.get('score') or 0)
                 minute = (comp.get('status') or {}).get('displayClock', '')
+                # Extract total corners from statistics if available
+                corners = None
+                for stat in (comp.get('statistics') or []):
+                    if stat.get('name', '').lower() in ('cornerkicks', 'corners', 'corner kicks'):
+                        try:
+                            corners = int(stat.get('displayValue') or '0')
+                        except (ValueError, TypeError):
+                            pass
+                        break
                 found[(hn.lower(), an.lower())] = {
                     'home': hn, 'away': an,
                     'home_score': hs, 'away_score': as_,
                     'minute': minute, 'espn_status': sname,
+                    'corners': corners,
                 }
         except Exception as exc:
             _log.warning('ESPN poll %s: %s', slug, exc)
@@ -1079,15 +1144,18 @@ def _update_live_scores():
                         hs, as_ = ev['home_score'], ev['away_score']
                         minute  = ev.get('minute', '')
                         if ev['espn_status'] in _ESPN_DONE:
-                            status = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                            status  = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                            corners = ev.get('corners')
                             cur.execute("""
                                 UPDATE predictions
                                 SET actual_home_score=%s, actual_away_score=%s,
+                                    actual_corners=%s,
                                     result_status=%s, match_status='FINISHED',
                                     live_home_score=%s, live_away_score=%s
                                 WHERE match_id=%s
-                            """, (hs, as_, status, hs, as_, mid))
-                            _log.info('FINISHED %s %d-%d %s → %s', home, hs, as_, away, status)
+                            """, (hs, as_, corners, status, hs, as_, mid))
+                            _log.info('FINISHED %s %d-%d %s → %s (corners=%s)',
+                                      home, hs, as_, away, status, corners)
                         else:
                             cur.execute("""
                                 UPDATE predictions
@@ -1109,16 +1177,17 @@ def _update_live_scores():
                             continue
                         result = _get_result(home or '', away or '', match_date or '')
                         if result:
-                            hs, as_ = result
+                            hs, as_, corners = result
                             status = _resolve_result(pw or '', home or '', away or '', hs, as_)
                             cur.execute("""
                                 UPDATE predictions
                                 SET actual_home_score=%s, actual_away_score=%s,
+                                    actual_corners=%s,
                                     result_status=%s, match_status='FINISHED'
                                 WHERE match_id=%s
-                            """, (hs, as_, status, mid))
-                            _log.info('Result %s %d-%d %s → %s',
-                                      home, hs, as_, away, status)
+                            """, (hs, as_, corners, status, mid))
+                            _log.info('Result %s %d-%d %s → %s (corners=%s)',
+                                      home, hs, as_, away, status, corners)
     except Exception as e:
         _log.warning('DB live update failed: %s', e)
         _check_pending_results()

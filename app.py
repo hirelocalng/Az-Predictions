@@ -1766,6 +1766,91 @@ def best_bet_of_day():
     return jsonify(payload)
 
 
+# ── NBA / WNBA endpoints ──────────────────────────────────────────────────────
+
+_NBA_CACHE:  dict = {"data": None, "ts": 0.0}
+_WNBA_CACHE: dict = {"data": None, "ts": 0.0}
+
+def _nba_logo(abbr, sport='nba'):
+    return f"https://a.espncdn.com/i/teamlogos/{sport}/500/{abbr.lower()}.png"
+
+
+@app.route('/api/nba/fixtures')
+def nba_fixtures():
+    now_ts = time.time()
+    if _NBA_CACHE["data"] is None or (now_ts - _NBA_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            from nba_predict import get_nba_fixtures as _get_games, predict_nba as _predict
+            games   = _get_games()
+            result  = []
+            for g in games:
+                pred = _predict(g['home_team'], g['away_team'])
+                if pred.get('error'):
+                    continue
+                result.append({
+                    **g,
+                    'sport':            'nba',
+                    'competition':      'NBA Playoffs' if g.get('postseason') else 'NBA',
+                    'ou_line':          220.5,
+                    'result':           {'home': round(pred['home_win_pct'] / 100, 3),
+                                         'away': round(pred['away_win_pct'] / 100, 3)},
+                    'over_total':       round(pred['over_pct'] / 100, 3),
+                    'predicted_winner': pred['predicted_winner'],
+                    'win_probability':  pred['win_probability'],
+                    'predicted_ou':     pred['predicted_ou'],
+                    'ou_probability':   pred['ou_probability'],
+                    'best_bet':         pred['best_bet'],
+                    'best_bet_type':    pred['best_bet_type'],
+                    'home_logo':        _nba_logo(g.get('home_abbr', ''), 'nba'),
+                    'away_logo':        _nba_logo(g.get('away_abbr', ''), 'nba'),
+                })
+            _NBA_CACHE["data"] = result
+            _NBA_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            app.logger.error("NBA fixtures failed: %s", exc)
+            if _NBA_CACHE["data"] is None:
+                _NBA_CACHE["data"] = []
+    return jsonify(_NBA_CACHE["data"] or [])
+
+
+@app.route('/api/wnba/fixtures')
+def wnba_fixtures():
+    now_ts = time.time()
+    if _WNBA_CACHE["data"] is None or (now_ts - _WNBA_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            from nba_predict import get_wnba_fixtures as _get_games, predict_wnba as _predict
+            games   = _get_games()
+            result  = []
+            for g in games:
+                pred = _predict(g['home_team'], g['away_team'])
+                if pred.get('error'):
+                    continue
+                result.append({
+                    **g,
+                    'sport':            'wnba',
+                    'competition':      'WNBA',
+                    'ou_line':          170.5,
+                    'result':           {'home': round(pred['home_win_pct'] / 100, 3),
+                                         'away': round(pred['away_win_pct'] / 100, 3)},
+                    'over_total':       round(pred['over_pct'] / 100, 3),
+                    'predicted_winner': pred['predicted_winner'],
+                    'win_probability':  pred['win_probability'],
+                    'predicted_ou':     pred['predicted_ou'],
+                    'ou_probability':   pred['ou_probability'],
+                    'best_bet':         pred['best_bet'],
+                    'best_bet_type':    pred['best_bet_type'],
+                    'home_logo':        _nba_logo(g.get('home_abbr', ''), 'wnba'),
+                    'away_logo':        _nba_logo(g.get('away_abbr', ''), 'wnba'),
+                })
+            _WNBA_CACHE["data"] = result
+            _WNBA_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            app.logger.error("WNBA fixtures failed: %s", exc)
+            if _WNBA_CACHE["data"] is None:
+                _WNBA_CACHE["data"] = []
+    return jsonify(_WNBA_CACHE["data"] or [])
+
+
 @app.route('/api/results')
 def results_history():
     """Return completed prediction history with stats."""

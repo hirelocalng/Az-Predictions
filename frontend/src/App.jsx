@@ -5,6 +5,7 @@ import ClubSection from './components/ClubSection.jsx'
 import BestBetSection from './components/BestBetSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 import ResultsSection from './components/ResultsSection.jsx'
+import BasketballSection from './components/BasketballSection.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import RegisterPage from './components/RegisterPage.jsx'
 import SubscribePage from './components/SubscribePage.jsx'
@@ -72,12 +73,13 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
 
       <nav className="header-nav">
         {[
-          ['best-bet',   '⭐ Best Bet'],
-          ['daily-tips', "Today's Tips"],
-          ['worldcup',   'World Cup 2026'],
-          ['intl',       'Internationals'],
-          ['club',       'Club Tips'],
-          ['history',    'History'],
+          ['best-bet',    '⭐ Best Bet'],
+          ['daily-tips',  "Today's Tips"],
+          ['worldcup',    'World Cup 2026'],
+          ['intl',        'Internationals'],
+          ['basketball',  '🏀 NBA / WNBA'],
+          ['club',        'Club Tips'],
+          ['history',     'History'],
         ].map(([id, label]) => (
           <button key={id}
             className={`nav-btn${active === id ? ' active' : ''}`}
@@ -230,7 +232,7 @@ export default function App() {
 
           <main style={{ paddingTop: 60 }}>
             <Hero
-              onBestBet={() => { setActive('best-bet');   scrollTo('best-bet')   }}
+              onBestBet={() => { setActive('best-bet');    scrollTo('best-bet')    }}
               onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
               onWC={()        => { setActive('worldcup');   scrollTo('worldcup')   }}
               onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
@@ -244,6 +246,8 @@ export default function App() {
             <WorldCupSection />
             <div className="divider" />
             <IntlSection />
+            <div className="divider" />
+            <BasketballSection />
             <div className="divider" />
             <ClubSection />
             <div className="divider" />

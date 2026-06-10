@@ -922,3 +922,310 @@ body::after {
   .sub-container { padding: 0 16px; }
   .hero-metrics { gap: 20px; }
 }
+
+/* ── Basketball Section ─────────────────────────────────────────────────────── */
+
+/* Tabs */
+.bball-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+  justify-content: center;
+}
+.bball-tab {
+  padding: 9px 22px;
+  border-radius: 999px;
+  border: 1px solid var(--border-med);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.bball-tab.active {
+  background: var(--green-dim);
+  border-color: var(--green-border);
+  color: var(--green);
+}
+.bball-tab:hover:not(.active) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* WNBA note */
+.bball-wnba-note {
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--amber);
+  background: var(--amber-dim);
+  border: 1px solid var(--amber-border);
+  border-radius: var(--r-sm);
+  padding: 8px 16px;
+  margin-bottom: 20px;
+  max-width: 580px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Card grid */
+.bball-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* Game card */
+.bball-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px 18px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  transition: border-color var(--transition), transform var(--transition);
+}
+.bball-card:hover {
+  border-color: var(--border-hi);
+  transform: translateY(-2px);
+}
+.bball-card.bball-live  { border-color: var(--green-border); }
+.bball-card.bball-done  { opacity: 0.82; }
+.bball-card.bball-skel  { min-height: 220px; }
+
+/* Card header */
+.bball-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.bball-league {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.bball-live-badge {
+  background: var(--green);
+  color: #000;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.bball-done-badge {
+  background: var(--bg-card-2);
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* Teams row */
+.bball-teams {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bball-team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+.bball-team.away {
+  flex-direction: row-reverse;
+  text-align: right;
+}
+.bball-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.bball-logo-fallback {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--bg-card-2);
+  border: 1px solid var(--border-med);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  letter-spacing: 0.03em;
+}
+.bball-team-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.25;
+}
+.bball-score {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--text);
+  min-width: 28px;
+}
+.bball-vs {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0 4px;
+}
+
+/* Win probability bar */
+.bball-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.bball-bar {
+  display: flex;
+  height: 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-card-2);
+}
+.bball-bar-home {
+  background: var(--green);
+  border-radius: 999px 0 0 999px;
+  transition: width 0.6s ease;
+}
+.bball-bar-away {
+  background: rgba(255,255,255,0.18);
+  border-radius: 0 999px 999px 0;
+  transition: width 0.6s ease;
+}
+.bball-bar-labels {
+  display: flex;
+  justify-content: space-between;
+}
+.bball-bar-home-lbl,
+.bball-bar-away-lbl {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.bball-bar-pct {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.bball-bar-team {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* Predictions row */
+.bball-preds {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--bg-card-2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.bball-pred-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+}
+.bball-pred-sep {
+  width: 1px;
+  background: var(--border);
+  align-self: stretch;
+}
+.bball-pred-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.bball-pred-val {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bball-pred-pct {
+  font-size: 0.75rem;
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* Best bet badge */
+.bball-best-bet {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: linear-gradient(135deg, rgba(0,208,132,0.08), rgba(0,208,132,0.04));
+  border: 1px solid var(--green-border);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+}
+.bball-bb-star {
+  color: var(--amber);
+  font-size: 0.9rem;
+}
+.bball-bb-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.bball-bb-pick {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--green);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bball-bb-conf {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--text-2);
+  background: var(--bg-card);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+/* Empty state */
+.bball-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.bball-empty-icon { font-size: 2.4rem; }
+.bball-empty-sub  { font-size: 0.8rem; color: var(--text-subtle); }
+
+/* Mobile */
+@media (max-width: 600px) {
+  .bball-grid { grid-template-columns: 1fr; }
+  .bball-team-name { font-size: 0.75rem; }
+  .bball-logo { width: 34px; height: 34px; }
+  .bball-score { font-size: 1.2rem; }
+}

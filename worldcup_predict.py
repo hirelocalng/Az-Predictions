@@ -21,11 +21,12 @@ warnings.filterwarnings('ignore')
 
 # --- Config ------------------------------------------------------------------
 
-_BASE_DIR          = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH          = os.path.join(_BASE_DIR, 'data', 'results.csv')
-RESULT_MODEL_PATH  = os.path.join(_BASE_DIR, 'worldcup_result_model.pkl')
-GOALS_MODEL_PATH   = os.path.join(_BASE_DIR, 'worldcup_goals_model.pkl')
-FORM_WINDOW        = 10
+_BASE_DIR           = os.path.dirname(os.path.abspath(__file__))
+DATA_PATH           = os.path.join(_BASE_DIR, 'data', 'results.csv')
+TEAM_STRENGTH_PATH  = os.path.join(_BASE_DIR, 'data', 'fifa_wc2026_dataset.csv')
+RESULT_MODEL_PATH   = os.path.join(_BASE_DIR, 'worldcup_result_model.pkl')
+GOALS_MODEL_PATH    = os.path.join(_BASE_DIR, 'worldcup_goals_model.pkl')
+FORM_WINDOW         = 10
 
 TOURNAMENT_IMPORTANCE = {
     'FIFA World Cup':                            1.00,
@@ -104,6 +105,16 @@ TEAM_ALIASES = {
     'new zealand':                  'New Zealand',
 }
 
+_WC26_NAME_FIX = {'Curacaio': 'Curaçao'}
+
+_DEFAULT_STRENGTH = {
+    'fifa_ranking':    150.0,
+    'fifa_points':    1000.0,
+    'wc_titles':         0.0,
+    'wc_appearances':    0.0,
+    'wc_knockout_rate':  0.0,
+}
+
 
 # --- Helpers -----------------------------------------------------------------
 
@@ -147,6 +158,33 @@ def load_models():
     with open(GOALS_MODEL_PATH, 'rb') as f:
         gd = pickle.load(f)
     return rd['model'], rd['features'], gd['model'], gd['features']
+
+
+_TEAM_STRENGTH = None  # cached {team_name: {fifa_ranking, ...}}
+
+
+def _load_team_strength():
+    global _TEAM_STRENGTH
+    if _TEAM_STRENGTH is not None:
+        return _TEAM_STRENGTH
+    lookup = {}
+    try:
+        df = pd.read_csv(TEAM_STRENGTH_PATH, encoding='latin-1')
+        for _, row in df.iterrows():
+            name = _WC26_NAME_FIX.get(row['team_name'], row['team_name'])
+            if name.startswith(('UEFA Playoff', 'Intercont')):
+                continue
+            lookup[name] = {
+                'fifa_ranking':    float(row['fifa_ranking_jan2026']),
+                'fifa_points':     float(row['fifa_points_jan2026']),
+                'wc_titles':       float(row['world_cup_titles']),
+                'wc_appearances':  float(row['world_cup_appearances']),
+                'wc_knockout_rate': float(row['knockout_stage_reach_rate']),
+            }
+    except Exception:
+        pass
+    _TEAM_STRENGTH = lookup
+    return lookup
 
 
 # --- Team Resolution ----------------------------------------------------------
@@ -318,6 +356,19 @@ def build_feature_vector(home_form, away_form, h2h, features,
         'away_major_win_rate':  away_form.get('major_win_rate', 0.0),
         'away_major_form_pts':  away_form.get('major_form_pts', 0.0),
         'away_major_count':     away_form.get('major_count', 0.0),
+        # FIFA ranking & WC history (merged into form dicts by predict_match)
+        'home_fifa_ranking':    home_form.get('fifa_ranking',    150.0),
+        'home_fifa_points':     home_form.get('fifa_points',    1000.0),
+        'home_wc_titles':       home_form.get('wc_titles',         0.0),
+        'home_wc_appearances':  home_form.get('wc_appearances',    0.0),
+        'home_wc_knockout_rate': home_form.get('wc_knockout_rate', 0.0),
+        'away_fifa_ranking':    away_form.get('fifa_ranking',    150.0),
+        'away_fifa_points':     away_form.get('fifa_points',    1000.0),
+        'away_wc_titles':       away_form.get('wc_titles',         0.0),
+        'away_wc_appearances':  away_form.get('wc_appearances',    0.0),
+        'away_wc_knockout_rate': away_form.get('wc_knockout_rate', 0.0),
+        'ranking_diff':  away_form.get('fifa_ranking', 150.0) - home_form.get('fifa_ranking', 150.0),
+        'points_diff':   home_form.get('fifa_points', 1000.0) - away_form.get('fifa_points', 1000.0),
     }
     return np.array([[row[f] for f in features]])
 
@@ -538,6 +589,11 @@ def predict_match(home_raw, away_raw, is_neutral=True,
     form_b = get_team_form(df, team_b)
     form_a.update(get_major_form(df, team_a))
     form_b.update(get_major_form(df, team_b))
+
+    # Merge FIFA ranking & WC history features
+    strength = _load_team_strength()
+    form_a.update(strength.get(team_a, _DEFAULT_STRENGTH))
+    form_b.update(strength.get(team_b, _DEFAULT_STRENGTH))
 
     h2h_ab = get_h2h(df, team_a, team_b)
 

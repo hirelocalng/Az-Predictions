@@ -18,6 +18,7 @@ warnings.filterwarnings('ignore')
 # ─── Config ──────────────────────────────────────────────────────────────────
 
 DATA_PATH          = 'data/results.csv'
+TEAM_STRENGTH_PATH = 'data/fifa_wc2026_dataset.csv'
 RESULT_MODEL_PATH  = 'worldcup_result_model.pkl'
 GOALS_MODEL_PATH   = 'worldcup_goals_model.pkl'
 FORM_WINDOW        = 10   # rolling match window for form stats
@@ -64,7 +65,24 @@ FEATURES = [
     # Major-tournament specific form (importance >= 0.70)
     'home_major_win_rate', 'home_major_form_pts', 'home_major_count',
     'away_major_win_rate', 'away_major_form_pts', 'away_major_count',
+    # FIFA ranking & World Cup history (static team-level lookup)
+    'home_fifa_ranking', 'home_fifa_points',
+    'home_wc_titles', 'home_wc_appearances', 'home_wc_knockout_rate',
+    'away_fifa_ranking', 'away_fifa_points',
+    'away_wc_titles', 'away_wc_appearances', 'away_wc_knockout_rate',
+    'ranking_diff', 'points_diff',
 ]
+
+# Defaults for teams not in the WC-2026 lookup
+_DEFAULT_STRENGTH = {
+    'fifa_ranking':    150.0,
+    'fifa_points':    1000.0,
+    'wc_titles':         0.0,
+    'wc_appearances':    0.0,
+    'wc_knockout_rate':  0.0,
+}
+
+_WC26_NAME_FIX = {'Curacaio': 'Curaçao'}
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -89,6 +107,26 @@ def get_importance(tournament):
     if any(x in t_lower for x in ['cup', 'championship', 'nations', 'league']):
         return 0.60
     return 0.45
+
+
+# ─── Team Strength Lookup ─────────────────────────────────────────────────────
+
+def build_team_strength_lookup():
+    """Return {team_name: {fifa_ranking, fifa_points, wc_titles, ...}} from WC-2026 dataset."""
+    df = pd.read_csv(TEAM_STRENGTH_PATH, encoding='latin-1')
+    lookup = {}
+    for _, row in df.iterrows():
+        name = _WC26_NAME_FIX.get(row['team_name'], row['team_name'])
+        if name.startswith(('UEFA Playoff', 'Intercont')):
+            continue
+        lookup[name] = {
+            'fifa_ranking':    float(row['fifa_ranking_jan2026']),
+            'fifa_points':     float(row['fifa_points_jan2026']),
+            'wc_titles':       float(row['world_cup_titles']),
+            'wc_appearances':  float(row['world_cup_appearances']),
+            'wc_knockout_rate': float(row['knockout_stage_reach_rate']),
+        }
+    return lookup
 
 
 # ─── Data Loading ─────────────────────────────────────────────────────────────
@@ -281,9 +319,25 @@ def main():
     print("Computing H2H features ...")
     h2h_feats = build_h2h_features(df_all)
 
+    print("Loading team strength lookup (FIFA rankings & WC history) ...")
+    strength_lookup = build_team_strength_lookup()
+    def _gs(team, key):
+        return strength_lookup.get(team, _DEFAULT_STRENGTH)[key]
+
+    for key in ['fifa_ranking', 'fifa_points', 'wc_titles', 'wc_appearances', 'wc_knockout_rate']:
+        df_all[f'home_{key}'] = df_all['home_team'].map(lambda t, k=key: _gs(t, k))
+        df_all[f'away_{key}'] = df_all['away_team'].map(lambda t, k=key: _gs(t, k))
+
+    known = sum(1 for t in set(df_all['home_team']) | set(df_all['away_team'])
+                if t in strength_lookup)
+    print(f"  {known} teams matched in WC-2026 lookup out of "
+          f"{len(set(df_all['home_team']) | set(df_all['away_team']))} unique teams")
+
     # Assemble feature matrix
+    strength_cols = [f'{s}_{k}' for s in ('home','away')
+                     for k in ('fifa_ranking','fifa_points','wc_titles','wc_appearances','wc_knockout_rate')]
     feat = (df_all[['tournament_importance', 'is_neutral', 'result', 'over_2_5',
-                     'date', 'home_score', 'away_score']]
+                     'date', 'home_score', 'away_score'] + strength_cols]
             .join(home_feats, how='left')
             .join(away_feats,  how='left')
             .join(home_mf,     how='left')
@@ -295,6 +349,8 @@ def main():
     feat['goals_scored_diff']    = feat['home_goals_scored']  - feat['away_goals_scored']
     feat['goals_conceded_diff']  = feat['home_goals_conceded']- feat['away_goals_conceded']
     feat['form_pts_diff']        = feat['home_form_pts']      - feat['away_form_pts']
+    feat['ranking_diff']         = feat['away_fifa_ranking']  - feat['home_fifa_ranking']
+    feat['points_diff']          = feat['home_fifa_points']   - feat['away_fifa_points']
 
     # Keep only rows with known scores
     feat = feat.dropna(subset=['home_score', 'away_score'])

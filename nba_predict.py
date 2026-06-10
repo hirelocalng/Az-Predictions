@@ -347,30 +347,32 @@ def predict_wnba(home_name, away_name):
 
 # ─── Fixture fetching ─────────────────────────────────────────────────────────
 
-def get_nba_fixtures(date_str=None):
-    """Return today's NBA games as list of dicts."""
-    if not date_str:
-        date_str = datetime.utcnow().strftime('%Y-%m-%d')
-    games = _get_bdl_today(date_str)
+def get_nba_fixtures(start_date=None, end_date=None):
+    """Return NBA games from start_date through end_date (default: today + 3 days)."""
+    from datetime import date as _date, timedelta as _td
+    if not start_date:
+        start_date = _date.today().strftime('%Y-%m-%d')
+    if not end_date:
+        end_date = (_date.today() + _td(days=3)).strftime('%Y-%m-%d')
+    data = _bdl_get('games', {
+        'start_date': start_date, 'end_date': end_date, 'per_page': 100,
+    })
     result = []
-    for g in games:
-        status = g.get('status', '')
-        home = g['home_team']['full_name']
-        away = g['visitor_team']['full_name']
-        home_abbr = g['home_team'].get('abbreviation', home[:3].upper())
-        away_abbr = g['visitor_team'].get('abbreviation', away[:3].upper())
-        hs = g.get('home_team_score')
-        vs = g.get('visitor_team_score')
+    for g in data.get('data', []):
+        raw_date  = g.get('date', start_date)
+        game_date = raw_date[:10] if raw_date else start_date
+        home      = g['home_team']['full_name']
+        away      = g['visitor_team']['full_name']
         result.append({
             'id':         g['id'],
             'home_team':  home,
             'away_team':  away,
-            'home_abbr':  home_abbr,
-            'away_abbr':  away_abbr,
-            'home_score': hs,
-            'away_score': vs,
-            'status':     status,
-            'date':       date_str,
+            'home_abbr':  g['home_team'].get('abbreviation', home[:3].upper()),
+            'away_abbr':  g['visitor_team'].get('abbreviation', away[:3].upper()),
+            'home_score': g.get('home_team_score'),
+            'away_score': g.get('visitor_team_score'),
+            'status':     g.get('status', ''),
+            'date':       game_date,
             'postseason': g.get('postseason', False),
             'period':     g.get('period', 0),
             'time':       g.get('time', ''),
@@ -378,37 +380,46 @@ def get_nba_fixtures(date_str=None):
     return result
 
 
-def get_wnba_fixtures(date_str=None):
-    """Return today's WNBA games from TheSportsDB."""
-    if not date_str:
-        date_str = datetime.utcnow().strftime('%Y-%m-%d')
-    try:
-        r = requests.get(
-            f'{TSDB_BASE}/eventsday.php',
-            params={'d': date_str, 'l': WNBA_TSDB_ID},
-            timeout=10,
-        )
-        events = r.json().get('events') or []
-        result = []
-        for e in events:
-            hs = e.get('intHomeScore')
-            as_ = e.get('intAwayScore')
-            result.append({
-                'id':         e.get('idEvent'),
-                'home_team':  e.get('strHomeTeam', ''),
-                'away_team':  e.get('strAwayTeam', ''),
-                'home_abbr':  _wnba_abbr(e.get('strHomeTeam', '')),
-                'away_abbr':  _wnba_abbr(e.get('strAwayTeam', '')),
-                'home_score': int(hs)  if hs and str(hs).strip() not in ('', 'None') else None,
-                'away_score': int(as_) if as_ and str(as_).strip() not in ('', 'None') else None,
-                'status':     e.get('strStatus', ''),
-                'time':       e.get('strTime', ''),
-                'date':       date_str,
-                'postseason': False,
-            })
-        return result
-    except Exception:
-        return []
+def get_wnba_fixtures(start_date=None, end_date=None):
+    """Return WNBA games from start_date through end_date (default: today + 3 days).
+    TheSportsDB only supports single-day queries, so we loop per day."""
+    from datetime import date as _date, timedelta as _td, datetime as _dtt
+    if not start_date:
+        start_date = _date.today().strftime('%Y-%m-%d')
+    if not end_date:
+        end_date = (_date.today() + _td(days=3)).strftime('%Y-%m-%d')
+    start = _dtt.strptime(start_date, '%Y-%m-%d').date()
+    end   = _dtt.strptime(end_date,   '%Y-%m-%d').date()
+    result = []
+    d = start
+    while d <= end:
+        date_str = d.strftime('%Y-%m-%d')
+        try:
+            r = requests.get(
+                f'{TSDB_BASE}/eventsday.php',
+                params={'d': date_str, 'l': WNBA_TSDB_ID},
+                timeout=10,
+            )
+            for e in (r.json().get('events') or []):
+                hs  = e.get('intHomeScore')
+                as_ = e.get('intAwayScore')
+                result.append({
+                    'id':         e.get('idEvent'),
+                    'home_team':  e.get('strHomeTeam', ''),
+                    'away_team':  e.get('strAwayTeam', ''),
+                    'home_abbr':  _wnba_abbr(e.get('strHomeTeam', '')),
+                    'away_abbr':  _wnba_abbr(e.get('strAwayTeam', '')),
+                    'home_score': int(hs)  if hs  and str(hs).strip()  not in ('', 'None') else None,
+                    'away_score': int(as_) if as_ and str(as_).strip() not in ('', 'None') else None,
+                    'status':     e.get('strStatus', ''),
+                    'time':       e.get('strTime', ''),
+                    'date':       date_str,
+                    'postseason': False,
+                })
+        except Exception:
+            pass
+        d += _td(days=1)
+    return result
 
 
 # ─── CLI test ─────────────────────────────────────────────────────────────────

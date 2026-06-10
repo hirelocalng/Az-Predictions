@@ -1195,6 +1195,21 @@ body::after {
   border-radius: 999px;
 }
 
+/* Day grouping */
+.bball-days         { display: flex; flex-direction: column; gap: 32px; }
+.bball-day-section  {}
+.bball-day-header   {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--green);
+  margin-bottom: 14px;
+  padding-left: 2px;
+  border-left: 3px solid var(--green);
+  padding-left: 10px;
+}
+
 /* Empty state */
 .bball-empty {
   display: flex;

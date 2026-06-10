@@ -132,6 +132,31 @@ function BballSkeleton() {
   )
 }
 
+// ── Date helpers ─────────────────────────────────────────────────────────────
+
+function dateLabel(dateStr) {
+  const now     = new Date()
+  const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  const gameMs  = new Date(dateStr + 'T00:00:00Z').getTime()
+  const diff    = Math.round((gameMs - todayMs) / 86_400_000)
+  if (diff === 0) return 'Today'
+  if (diff === 1) return 'Tomorrow'
+  const d = new Date(dateStr + 'T00:00:00Z')
+  const weekday = d.toLocaleDateString('en-US', { weekday: 'long',  timeZone: 'UTC' })
+  const month   = d.toLocaleDateString('en-US', { month: 'short',   timeZone: 'UTC' })
+  return `${weekday} ${month} ${d.getUTCDate()}`
+}
+
+function groupByDate(games) {
+  const map = {}
+  for (const g of games) {
+    const d = g.date || 'unknown'
+    if (!map[d]) map[d] = []
+    map[d].push(g)
+  }
+  return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function Empty({ sport }) {
@@ -139,7 +164,7 @@ function Empty({ sport }) {
   return (
     <div className="bball-empty">
       <div className="bball-empty-icon">🏀</div>
-      <p>No {label} games today — check back tomorrow.</p>
+      <p>No {label} games in the next 4 days — check back soon.</p>
     </div>
   )
 }
@@ -215,9 +240,16 @@ export default function BasketballSection({ activeNav }) {
       {!loading && !err && games?.length === 0 && <Empty sport={tab} />}
 
       {!loading && !err && games?.length > 0 && (
-        <div className="bball-grid">
-          {games.map((g, i) => (
-            <GameCard key={g.id || i} game={g} />
+        <div className="bball-days">
+          {groupByDate(games).map(([date, dayGames]) => (
+            <div key={date} className="bball-day-section">
+              <div className="bball-day-header">{dateLabel(date)}</div>
+              <div className="bball-grid">
+                {dayGames.map((g, i) => (
+                  <GameCard key={g.id || i} game={g} />
+                ))}
+              </div>
+            </div>
           ))}
         </div>
       )}

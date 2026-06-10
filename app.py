@@ -1941,7 +1941,7 @@ def nba_fixtures():
                 pred = _predict(g['home_team'], g['away_team'])
                 if pred.get('error'):
                     continue
-                comp = 'NBA Playoffs' if g.get('postseason') else 'NBA'
+                comp = g.get('competition') or ('NBA Playoffs' if g.get('postseason') else 'NBA')
                 result.append({
                     **g,
                     'sport':            'nba',

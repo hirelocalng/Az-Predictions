@@ -3,10 +3,11 @@ nba_predict.py — NBA and WNBA match prediction using trained XGBoost models.
 
 Data sources
 ------------
-NBA fixtures / form : balldontlie.io v1 API (free, no key required)
-WNBA fixtures       : TheSportsDB API (league id 4328)
-WNBA team form      : data/wnba_team_form_cache.csv (up to 2020 season)
-H2H                 : data/nba.sqlite (historical)
+NBA fixtures  : TheSportsDB API (league id 4387); BallDontLie fallback for form
+NBA team form : balldontlie.io v1 API (free, no key required)
+WNBA fixtures : TheSportsDB API (league id 4328)
+WNBA team form: data/wnba_team_form_cache.csv (up to 2020 season)
+H2H           : data/nba.sqlite (historical)
 """
 
 import os, pickle, sqlite3, time, traceback
@@ -27,9 +28,10 @@ WNBA_FORM_CACHE  = 'data/wnba_team_form_cache.csv'
 NBA_OU_LINE  = 220.5
 WNBA_OU_LINE = 170.5
 
-BDL_BASE  = 'https://www.balldontlie.io/api/v1'
-TSDB_BASE = 'https://www.thesportsdb.com/api/v1/json/3'
+BDL_BASE     = 'https://www.balldontlie.io/api/v1'
+TSDB_BASE    = 'https://www.thesportsdb.com/api/v1/json/3'
 WNBA_TSDB_ID = '4328'
+NBA_TSDB_ID  = '4387'
 
 # ─── Model loading ────────────────────────────────────────────────────────────
 _NBA_RES = _NBA_OU = _WNBA_RES = _WNBA_OU = None
@@ -78,6 +80,53 @@ WNBA_NAME_TO_ABBR = {
 
 def _wnba_abbr(name):
     return WNBA_NAME_TO_ABBR.get(name.lower().strip(), name[:3].upper())
+
+# ─── NBA team name → ESPN abbreviation ───────────────────────────────────────
+_NBA_NAME_TO_ABBR = {
+    'atlanta hawks':          'ATL',
+    'boston celtics':         'BOS',
+    'brooklyn nets':          'BKN',
+    'charlotte hornets':      'CHA',
+    'chicago bulls':          'CHI',
+    'cleveland cavaliers':    'CLE',
+    'dallas mavericks':       'DAL',
+    'denver nuggets':         'DEN',
+    'detroit pistons':        'DET',
+    'golden state warriors':  'GSW',
+    'houston rockets':        'HOU',
+    'indiana pacers':         'IND',
+    'los angeles clippers':   'LAC',
+    'los angeles lakers':     'LAL',
+    'memphis grizzlies':      'MEM',
+    'miami heat':             'MIA',
+    'milwaukee bucks':        'MIL',
+    'minnesota timberwolves': 'MIN',
+    'new orleans pelicans':   'NOP',
+    'new york knicks':        'NYK',
+    'oklahoma city thunder':  'OKC',
+    'orlando magic':          'ORL',
+    'philadelphia 76ers':     'PHI',
+    'phoenix suns':           'PHX',
+    'portland trail blazers': 'POR',
+    'sacramento kings':       'SAC',
+    'san antonio spurs':      'SAS',
+    'toronto raptors':        'TOR',
+    'utah jazz':              'UTA',
+    'washington wizards':     'WAS',
+}
+
+def _nba_abbr(name):
+    return _NBA_NAME_TO_ABBR.get(name.lower().strip(), name[:3].upper())
+
+
+# NBA Finals 2026 — hardcoded fallback if TheSportsDB misses playoff games.
+# 2-2-1-1-1 format; Spurs have home court advantage.
+_NBA_FINALS_2026 = [
+    {'date': '2026-06-11', 'home_team': 'New York Knicks',   'away_team': 'San Antonio Spurs', 'competition': 'NBA Finals'},
+    {'date': '2026-06-14', 'home_team': 'San Antonio Spurs', 'away_team': 'New York Knicks',   'competition': 'NBA Finals'},
+    {'date': '2026-06-17', 'home_team': 'New York Knicks',   'away_team': 'San Antonio Spurs', 'competition': 'NBA Finals'},
+    {'date': '2026-06-19', 'home_team': 'San Antonio Spurs', 'away_team': 'New York Knicks',   'competition': 'NBA Finals'},
+]
 
 # ─── BallDontLie helpers ──────────────────────────────────────────────────────
 _bdl_teams_cache = None
@@ -348,35 +397,81 @@ def predict_wnba(home_name, away_name):
 # ─── Fixture fetching ─────────────────────────────────────────────────────────
 
 def get_nba_fixtures(start_date=None, end_date=None):
-    """Return NBA games from start_date through end_date (default: today + 3 days)."""
-    from datetime import date as _date, timedelta as _td
+    """Return NBA games from start_date through end_date using TheSportsDB (l=4387).
+    Falls back to hardcoded NBA Finals schedule for any date that returns no games."""
+    from datetime import date as _date, timedelta as _td, datetime as _dtt
     if not start_date:
         start_date = _date.today().strftime('%Y-%m-%d')
     if not end_date:
         end_date = (_date.today() + _td(days=3)).strftime('%Y-%m-%d')
-    data = _bdl_get('games', {
-        'start_date': start_date, 'end_date': end_date, 'per_page': 100,
-    })
+
+    start = _dtt.strptime(start_date, '%Y-%m-%d').date()
+    end_  = _dtt.strptime(end_date,   '%Y-%m-%d').date()
     result = []
-    for g in data.get('data', []):
-        raw_date  = g.get('date', start_date)
-        game_date = raw_date[:10] if raw_date else start_date
-        home      = g['home_team']['full_name']
-        away      = g['visitor_team']['full_name']
-        result.append({
-            'id':         g['id'],
-            'home_team':  home,
-            'away_team':  away,
-            'home_abbr':  g['home_team'].get('abbreviation', home[:3].upper()),
-            'away_abbr':  g['visitor_team'].get('abbreviation', away[:3].upper()),
-            'home_score': g.get('home_team_score'),
-            'away_score': g.get('visitor_team_score'),
-            'status':     g.get('status', ''),
-            'date':       game_date,
-            'postseason': g.get('postseason', False),
-            'period':     g.get('period', 0),
-            'time':       g.get('time', ''),
-        })
+    dates_with_games = set()
+
+    d = start
+    while d <= end_:
+        date_str = d.strftime('%Y-%m-%d')
+        try:
+            r = requests.get(
+                f'{TSDB_BASE}/eventsday.php',
+                params={'d': date_str, 'l': NBA_TSDB_ID},
+                timeout=10,
+            )
+            for e in (r.json().get('events') or []):
+                hs   = e.get('intHomeScore')
+                as_  = e.get('intAwayScore')
+                home = e.get('strHomeTeam', '')
+                away = e.get('strAwayTeam', '')
+                ev   = (e.get('strEvent') or '').lower()
+                rnd  = (e.get('strRound') or '').lower()
+                if 'finals' in ev or 'finals' in rnd:
+                    comp = 'NBA Finals'
+                elif 'playoff' in ev or 'playoff' in rnd or 'semi' in rnd or 'conference' in rnd:
+                    comp = 'NBA Playoffs'
+                else:
+                    comp = 'NBA'
+                result.append({
+                    'id':          e.get('idEvent'),
+                    'home_team':   home,
+                    'away_team':   away,
+                    'home_abbr':   _nba_abbr(home),
+                    'away_abbr':   _nba_abbr(away),
+                    'home_score':  int(hs)  if hs  and str(hs).strip()  not in ('', 'None') else None,
+                    'away_score':  int(as_) if as_ and str(as_).strip() not in ('', 'None') else None,
+                    'status':      e.get('strStatus', ''),
+                    'time':        e.get('strTime', ''),
+                    'date':        date_str,
+                    'competition': comp,
+                    'postseason':  comp != 'NBA',
+                })
+                dates_with_games.add(date_str)
+        except Exception:
+            pass
+        d += _td(days=1)
+
+    # Inject hardcoded Finals games for any in-range date with no API results
+    for game in _NBA_FINALS_2026:
+        if start_date <= game['date'] <= end_date and game['date'] not in dates_with_games:
+            home = game['home_team']
+            away = game['away_team']
+            result.append({
+                'id':          f"finals-{game['date']}",
+                'home_team':   home,
+                'away_team':   away,
+                'home_abbr':   _nba_abbr(home),
+                'away_abbr':   _nba_abbr(away),
+                'home_score':  None,
+                'away_score':  None,
+                'status':      'Scheduled',
+                'time':        '20:00',
+                'date':        game['date'],
+                'competition': game['competition'],
+                'postseason':  True,
+            })
+
+    result.sort(key=lambda g: g['date'])
     return result
 
 

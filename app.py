@@ -166,6 +166,7 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_away_score INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_minute VARCHAR(10)",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS actual_corners INTEGER",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS sport VARCHAR(20) DEFAULT 'football'",
             ]:
                 cur.execute(_col)
         print('DB init: all tables ready (predictions, users, sessions) ✓', flush=True)
@@ -252,6 +253,52 @@ def _save_prediction(tip):
             _write_raw_history(data)
 
 
+def _save_basketball_prediction(game, pred, sport):
+    """Save an NBA or WNBA prediction to history."""
+    home  = (game.get('home_team') or '').strip()
+    away  = (game.get('away_team') or '').strip()
+    date  = (game.get('date') or '')
+    if not home or not away or not date:
+        return
+    mid     = _match_key(home, away, date)
+    comp    = game.get('competition', sport.upper())
+    pw      = pred.get('best_bet', pred.get('predicted_winner', ''))
+    pg      = pred.get('predicted_ou', '')
+    time_   = (game.get('time') or '')
+    kickoff = f"{date}T{time_}:00Z" if time_ else f"{date}T23:00:00Z"
+
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    INSERT INTO predictions
+                        (match_id, home_team, away_team, match_date, match_time,
+                         competition, predicted_winner, predicted_goals,
+                         result_status, kickoff_utc, sport)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s)
+                    ON CONFLICT (match_id) DO NOTHING
+                """, (mid, home, away, date, time_, comp, pw, pg, kickoff, sport))
+                return
+    except Exception as e:
+        _log.warning('Basketball DB save failed: %s', e)
+
+    entry = {
+        'match_id': mid, 'home_team': home, 'away_team': away,
+        'match_date': date, 'match_time': time_, 'competition': comp,
+        'predicted_winner': pw, 'predicted_goals': pg,
+        'predicted_btts': None, 'predicted_corners': None,
+        'actual_home_score': None, 'actual_away_score': None,
+        'result_status': 'PENDING', 'kickoff_utc': kickoff,
+        'sport': sport,
+        'saved_at': datetime.now(timezone.utc).isoformat(),
+    }
+    with _HISTORY_LOCK:
+        data = _read_raw_history()
+        if mid not in {p['match_id'] for p in data['predictions']}:
+            data['predictions'].append(entry)
+            _write_raw_history(data)
+
+
 def _get_history():
     """Return {predictions: [...]} from DB or JSON fallback."""
     try:
@@ -262,7 +309,8 @@ def _get_history():
                            competition, predicted_winner, predicted_goals,
                            predicted_btts, predicted_corners,
                            actual_home_score, actual_away_score, actual_corners,
-                           result_status, kickoff_utc, created_at
+                           result_status, kickoff_utc, created_at,
+                           COALESCE(sport, 'football') AS sport
                     FROM predictions
                     ORDER BY match_date DESC, created_at DESC
                 """)
@@ -892,11 +940,13 @@ def _sub_results(pred):
             ok = 'draw' in pw
         sub['result'] = 'WON' if ok else 'LOST'
 
-    # Goals Over/Under
+    # Goals / O/U Over/Under
     pg = (pred.get('predicted_goals') or '').lower()
     if pg:
         predicted_over = 'over' in pg
-        thresh = 3.5 if '3.5' in pg else 2.5
+        import re as _re
+        _nums = _re.findall(r'\d+\.?\d*', pg)
+        thresh = float(_nums[-1]) if _nums else 2.5
         actual_over    = total > thresh
         sub['goals'] = 'WON' if predicted_over == actual_over else 'LOST'
 
@@ -941,6 +991,14 @@ def _resolve_result(pw, home, away, hs, as_):
     if 'corner' in pw_l:
         return 'LOST'
 
+    # Basketball / generic Over/Under (e.g. "Over 220.5", "Under 170.5")
+    if 'over' in pw_l or 'under' in pw_l:
+        import re as _re
+        over   = 'over' in pw_l
+        _nums  = _re.findall(r'\d+\.?\d*', pw_l)
+        thresh = float(_nums[-1]) if _nums else 220.5
+        return 'WON' if (over and total > thresh) or (not over and total <= thresh) else 'LOST'
+
     # Match result
     home_l, away_l = home.lower(), away.lower()
     if hs > as_:
@@ -948,6 +1006,102 @@ def _resolve_result(pw, home, away, hs, as_):
     elif as_ > hs:
         return 'WON' if away_l in pw_l else 'LOST'
     return 'WON' if 'draw' in pw_l else 'LOST'
+
+
+def _get_nba_game_result(home, away, match_date):
+    """Fetch NBA game result from BallDontLie."""
+    import requests as _req
+    try:
+        r = _req.get(
+            'https://www.balldontlie.io/api/v1/games',
+            params={'start_date': match_date, 'end_date': match_date, 'per_page': 30},
+            timeout=10,
+        )
+        for g in r.json().get('data', []):
+            ht  = g['home_team']['full_name']
+            at  = g['visitor_team']['full_name']
+            hs  = g.get('home_team_score')
+            as_ = g.get('visitor_team_score')
+            if not hs or not as_:
+                continue
+            if _team_similar(ht, home) and _team_similar(at, away):
+                return int(hs), int(as_)
+    except Exception as e:
+        _log.warning('NBA result check: %s', e)
+    return None
+
+
+def _get_wnba_game_result(home, away, match_date):
+    """Fetch WNBA game result from TheSportsDB."""
+    import requests as _req
+    try:
+        r = _req.get(
+            'https://www.thesportsdb.com/api/v1/json/3/eventsday.php',
+            params={'d': match_date, 'l': '4328'},
+            timeout=10,
+        )
+        for ev in (r.json().get('events') or []):
+            hs_r = ev.get('intHomeScore')
+            as_r = ev.get('intAwayScore')
+            if not hs_r or not as_r:
+                continue
+            eh = ev.get('strHomeTeam', '')
+            ea = ev.get('strAwayTeam', '')
+            if _team_similar(eh, home) and _team_similar(ea, away):
+                return int(hs_r), int(as_r)
+    except Exception as e:
+        _log.warning('WNBA result check: %s', e)
+    return None
+
+
+def _check_basketball_results():
+    """Hourly job: fetch final scores for PENDING NBA/WNBA predictions."""
+    _log.info('Basketball results check: scanning pending...')
+    now = datetime.now(timezone.utc)
+    resolved = 0
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, match_date,
+                           predicted_winner, kickoff_utc, sport
+                    FROM predictions
+                    WHERE result_status IN ('PENDING', 'LIVE')
+                      AND sport IN ('nba', 'wnba')
+                """)
+                for mid, home, away, match_date, pw, kickoff_str, sport in cur.fetchall():
+                    try:
+                        if kickoff_str:
+                            kickoff = datetime.fromisoformat(
+                                str(kickoff_str).replace('Z', '+00:00'))
+                        elif match_date:
+                            kickoff = datetime.fromisoformat(
+                                f'{match_date}T23:00:00+00:00')
+                        else:
+                            continue
+                    except Exception:
+                        continue
+                    if kickoff + timedelta(hours=3) > now:
+                        continue
+                    res = (_get_nba_game_result(home, away, str(match_date))
+                           if sport == 'nba'
+                           else _get_wnba_game_result(home, away, str(match_date)))
+                    if res is None:
+                        continue
+                    hs, as_ = res
+                    status = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                    cur.execute("""
+                        UPDATE predictions
+                        SET actual_home_score=%s, actual_away_score=%s,
+                            result_status=%s, match_status='FINISHED'
+                        WHERE match_id=%s
+                    """, (hs, as_, status, mid))
+                    _log.info('Basketball result: %s %d-%d %s -> %s',
+                              home, hs, as_, away, status)
+                    resolved += 1
+                _log.info('Basketball results check done: %d resolved', resolved)
+    except Exception as e:
+        _log.warning('Basketball results check failed: %s', e)
 
 
 def _check_pending_results():
@@ -1787,10 +1941,11 @@ def nba_fixtures():
                 pred = _predict(g['home_team'], g['away_team'])
                 if pred.get('error'):
                     continue
+                comp = 'NBA Playoffs' if g.get('postseason') else 'NBA'
                 result.append({
                     **g,
                     'sport':            'nba',
-                    'competition':      'NBA Playoffs' if g.get('postseason') else 'NBA',
+                    'competition':      comp,
                     'ou_line':          220.5,
                     'result':           {'home': round(pred['home_win_pct'] / 100, 3),
                                          'away': round(pred['away_win_pct'] / 100, 3)},
@@ -1804,6 +1959,9 @@ def nba_fixtures():
                     'home_logo':        _nba_logo(g.get('home_abbr', ''), 'nba'),
                     'away_logo':        _nba_logo(g.get('away_abbr', ''), 'nba'),
                 })
+                _save_basketball_prediction(
+                    {**g, 'competition': comp}, pred, 'nba'
+                )
             _NBA_CACHE["data"] = result
             _NBA_CACHE["ts"]   = now_ts
         except Exception as exc:
@@ -1842,6 +2000,9 @@ def wnba_fixtures():
                     'home_logo':        _nba_logo(g.get('home_abbr', ''), 'wnba'),
                     'away_logo':        _nba_logo(g.get('away_abbr', ''), 'wnba'),
                 })
+                _save_basketball_prediction(
+                    {**g, 'competition': 'WNBA'}, pred, 'wnba'
+                )
             _WNBA_CACHE["data"] = result
             _WNBA_CACHE["ts"]   = now_ts
         except Exception as exc:
@@ -2208,17 +2369,22 @@ try:
                        id='live_checker', misfire_grace_time=60)
     _scheduler.add_job(_check_pending_results, 'interval', hours=1,
                        id='results_checker', misfire_grace_time=300)
+    _scheduler.add_job(_check_basketball_results, 'interval', hours=1,
+                       id='basketball_checker', misfire_grace_time=300)
     _scheduler.add_job(_refresh_caches, 'interval', hours=6,
                        id='cache_refresh', misfire_grace_time=300)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
     _log.info('APScheduler started — live/2 min, results/1 h, cache/6 h')
-    # Resolve any already-finished matches immediately on startup
     try:
         _check_pending_results()
     except Exception as _cpr_err:
         _log.warning('Startup results check failed: %s', _cpr_err)
+    try:
+        _check_basketball_results()
+    except Exception as _cbr_err:
+        _log.warning('Startup basketball check failed: %s', _cbr_err)
 except Exception as _sch_err:
     _log.warning('APScheduler not available: %s', _sch_err)
 

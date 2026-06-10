@@ -146,8 +146,13 @@ function Empty({ sport }) {
 
 // ── Main section ──────────────────────────────────────────────────────────────
 
-export default function BasketballSection() {
+export default function BasketballSection({ activeNav }) {
   const [tab,      setTab]      = useState('nba')
+
+  useEffect(() => {
+    if (activeNav === 'nba' || activeNav === 'wnba') setTab(activeNav)
+  }, [activeNav])
+
   const [nbaGames, setNbaGames] = useState(null)
   const [wnbaGames,setWnbaGames]= useState(null)
   const [nbaErr,   setNbaErr]   = useState(null)
@@ -178,10 +183,6 @@ export default function BasketballSection() {
         <h2 className="section-title">
           NBA &amp; <span className="green">WNBA</span>
         </h2>
-        <p className="section-sub">
-          XGBoost models trained on 28,000+ NBA games and 5,000+ WNBA games.
-          Win probability, total points O/U, and best bet for every game.
-        </p>
       </div>
 
       {/* Sport tabs */}

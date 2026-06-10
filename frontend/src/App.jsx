@@ -77,13 +77,17 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
           ['daily-tips',  "Today's Tips"],
           ['worldcup',    'World Cup 2026'],
           ['intl',        'Internationals'],
-          ['basketball',  '🏀 NBA / WNBA'],
+          ['nba',         '🏀 NBA'],
+          ['wnba',        '🏀 WNBA'],
           ['club',        'Club Tips'],
           ['history',     'History'],
         ].map(([id, label]) => (
           <button key={id}
             className={`nav-btn${active === id ? ' active' : ''}`}
-            onClick={() => { setActive(id); scrollTo(id) }}>
+            onClick={() => {
+              setActive(id)
+              scrollTo(id === 'nba' || id === 'wnba' ? 'basketball' : id)
+            }}>
             {label}
           </button>
         ))}
@@ -121,10 +125,6 @@ function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, navigate }) {
         <span className="accent-green">Football</span>{' '}
         <span className="accent-amber">Predictor</span>
       </h1>
-      <p className="hero-desc">
-        XGBoost models trained on 280,000+ matches across 40 leagues.
-        World Cup 2026 forecasts, live internationals, and daily club tips.
-      </p>
       <div className="hero-actions">
         <button className="btn-primary hero-bb-btn" onClick={onBestBet}>⭐ Best Bet Today</button>
         <button className="btn-outline" onClick={onDailyTips}>Today's Tips</button>
@@ -247,7 +247,7 @@ export default function App() {
             <div className="divider" />
             <IntlSection />
             <div className="divider" />
-            <BasketballSection />
+            <BasketballSection activeNav={active} />
             <div className="divider" />
             <ClubSection />
             <div className="divider" />

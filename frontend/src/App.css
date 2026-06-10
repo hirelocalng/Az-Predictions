@@ -622,6 +622,7 @@ body::after {
 .res-home,.res-away { font-weight: 600; color: var(--text); }
 .res-vs { font-size: 0.68rem; color: var(--text-subtle); }
 .res-row-comp { font-size: 0.68rem; color: var(--text-muted); min-width: 100px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.res-sport-badge { display: inline-flex; align-items: center; gap: 3px; color: var(--text-muted); }
 .res-row-pred,.res-row-score { display: flex; flex-direction: column; gap: 2px; }
 .res-pred-label,.res-score-label { font-size: 0.58rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-subtle); }
 .res-pred-val { font-size: 0.8rem; font-weight: 600; color: var(--text-2); }
@@ -1209,8 +1210,43 @@ body::after {
 
 /* Mobile */
 @media (max-width: 600px) {
-  .bball-grid { grid-template-columns: 1fr; }
-  .bball-team-name { font-size: 0.75rem; }
-  .bball-logo { width: 34px; height: 34px; }
-  .bball-score { font-size: 1.2rem; }
+  .bball-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .bball-card {
+    padding: 16px 14px 14px;
+    gap: 12px;
+    border-radius: var(--r-md);
+  }
+  .bball-logo        { width: 44px; height: 44px; }
+  .bball-logo-fallback { width: 44px; height: 44px; font-size: 0.72rem; }
+  .bball-team-name   { font-size: 0.88rem; font-weight: 700; }
+  .bball-score       { font-size: 1.35rem; }
+  .bball-vs          { font-size: 0.68rem; }
+
+  .bball-bar-wrap    { gap: 5px; }
+  .bball-bar         { height: 8px; }
+  .bball-bar-home-lbl, .bball-bar-away-lbl { font-size: 0.72rem; }
+  .bball-bar-pct     { font-size: 0.82rem; font-weight: 700; }
+  .bball-bar-team    { font-size: 0.68rem; }
+
+  .bball-preds       { gap: 0; }
+  .bball-pred-item   { padding: 8px 10px; }
+  .bball-pred-label  { font-size: 0.68rem; }
+  .bball-pred-val    { font-size: 0.88rem; }
+  .bball-pred-pct    { font-size: 0.78rem; }
+
+  .bball-best-bet {
+    padding: 10px 14px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .bball-bb-label    { font-size: 0.68rem; }
+  .bball-bb-pick     { font-size: 0.9rem; font-weight: 800; flex: 1; min-width: 0; }
+  .bball-bb-conf     { font-size: 0.82rem; }
+  .bball-bb-star     { font-size: 1rem; }
+
+  .bball-tabs        { gap: 6px; margin-bottom: 14px; }
+  .bball-tab         { padding: 8px 18px; font-size: 0.82rem; }
 }

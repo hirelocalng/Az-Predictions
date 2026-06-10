@@ -55,7 +55,11 @@ function ResultRow({ pred }) {
         <span className="res-away">{pred.away_team}</span>
       </div>
 
-      <div className="res-row-comp">{pred.competition}</div>
+      <div className="res-row-comp">
+        {(pred.sport === 'nba' || pred.sport === 'wnba')
+          ? <span className="res-sport-badge">🏀 {pred.competition}</span>
+          : pred.competition}
+      </div>
 
       <div className="res-row-pred">
         <span className="res-pred-label">Best Bet</span>
@@ -76,7 +80,11 @@ function ResultRow({ pred }) {
             <SubChip label="Result" value={pred.predicted_winner} status={sub.result} />
           )}
           {sub.goals !== undefined && pred.predicted_goals && (
-            <SubChip label="Goals" value={pred.predicted_goals} status={sub.goals} />
+            <SubChip
+              label={pred.sport === 'nba' || pred.sport === 'wnba' ? 'O/U' : 'Goals'}
+              value={pred.predicted_goals}
+              status={sub.goals}
+            />
           )}
           {sub.btts !== undefined && pred.predicted_btts && (
             <SubChip label="BTTS" value={`BTTS ${pred.predicted_btts}`} status={sub.btts} />

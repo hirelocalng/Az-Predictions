@@ -117,7 +117,7 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, navigate }) {
+function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, navigate }) {
   return (
     <section className="hero">
       <div className="hero-eyebrow">AI-Powered Match Predictions</div>
@@ -132,6 +132,8 @@ function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, navigate }) {
         <button className="btn-outline" onClick={onWC}>World Cup 2026</button>
         <button className="btn-outline" onClick={onIntl}>Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
+        <button className="btn-outline" onClick={onNBA}>🏀 NBA</button>
+        <button className="btn-outline" onClick={onWNBA}>🏀 WNBA</button>
         <button className="btn-outline" onClick={() => navigate('/subscribe')}
                 style={{ borderColor: 'rgba(201,146,42,0.5)', color: 'var(--amber)' }}>
           👑 Go Premium
@@ -238,6 +240,8 @@ export default function App() {
               onWC={()        => { setActive('worldcup');   scrollTo('worldcup')   }}
               onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
               onClub={()      => { setActive('club');       scrollTo('club')       }}
+              onNBA={()       => { setActive('nba');        scrollTo('nba-section')  }}
+              onWNBA={()      => { setActive('wnba');       scrollTo('wnba-section') }}
               navigate={navigate}
             />
             <BestBetSection />

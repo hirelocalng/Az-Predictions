@@ -25,11 +25,15 @@ function groupByDate(games) {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
 }
 
-/** Convert UTC "HH:MM" time + date string to user's local time string. */
+/** Convert UTC "HH:MM" or "HH:MM:SS" time + date string to user's local time string. */
 function localKickoff(dateStr, timeStr) {
   if (!timeStr || typeof timeStr !== 'string') return null
-  const m = timeStr.match(/^(\d{1,2}):(\d{2})$/)
+  // Match HH:MM optionally followed by :SS — no end anchor so HH:MM:SS works too
+  const m = timeStr.match(/^(\d{1,2}):(\d{2})/)
   if (!m) return null
+  // "00:00" is TheSportsDB's placeholder for "time unknown"
+  if (m[1] === '0' && m[2] === '00') return null
+  if (m[1] === '00' && m[2] === '00') return null
   try {
     const dt = new Date(`${dateStr}T${m[1].padStart(2, '0')}:${m[2]}:00Z`)
     if (isNaN(dt.getTime())) return null
@@ -261,7 +265,7 @@ export default function BasketballSection() {
       <SportSection id="wnba-section" title="WNBA" games={wnbaGames} err={wnbaErr} />
 
       <p className="footer-text">
-        NBA via TheSportsDB · WNBA via BallDontLie · predictions updated every 10 minutes
+        NBA via TheSportsDB · WNBA via ESPN · predictions updated every 10 minutes
       </p>
     </section>
   )

@@ -484,7 +484,7 @@ def get_nba_fixtures(start_date=None, end_date=None):
                 'home_score':  None,
                 'away_score':  None,
                 'status':      'Scheduled',
-                'time':        '20:00',
+                'time':        '',
                 'date':        game['date'],
                 'competition': game['competition'],
                 'postseason':  True,
@@ -495,51 +495,70 @@ def get_nba_fixtures(start_date=None, end_date=None):
 
 
 def get_wnba_fixtures(start_date=None, end_date=None):
-    """Return WNBA games for start_date through end_date.
-    Primary: BallDontLie WNBA API (api.balldontlie.io/wnba/v1).
-    Fallback: TheSportsDB l=4328 if BDL returns nothing."""
+    """Return WNBA games using ESPN WNBA scoreboard API (primary).
+    Fallback: TheSportsDB l=4328 per-day loop."""
     from datetime import date as _date, timedelta as _td, datetime as _dtt
     if not start_date:
         start_date = _date.today().strftime('%Y-%m-%d')
     if not end_date:
         end_date = (_date.today() + _td(days=3)).strftime('%Y-%m-%d')
 
-    # ── Primary: BallDontLie WNBA API ────────────────────────────────────────
-    data = _bdl_wnba_get('games', {
-        'start_date': start_date, 'end_date': end_date, 'per_page': 100,
-    })
+    start = _dtt.strptime(start_date, '%Y-%m-%d').date()
+    end_  = _dtt.strptime(end_date,   '%Y-%m-%d').date()
     result = []
-    for g in data.get('data', []):
-        raw_date  = g.get('date', start_date)
-        game_date = raw_date[:10] if raw_date else start_date
-        home = g.get('home_team', {}).get('full_name', '')
-        away = g.get('visitor_team', {}).get('full_name', '')
-        home_abbr = (g.get('home_team', {}).get('abbreviation')
-                     or _wnba_abbr(home))
-        away_abbr = (g.get('visitor_team', {}).get('abbreviation')
-                     or _wnba_abbr(away))
-        hs  = g.get('home_team_score')
-        as_ = g.get('visitor_team_score')
-        result.append({
-            'id':         g.get('id'),
-            'home_team':  home,
-            'away_team':  away,
-            'home_abbr':  home_abbr,
-            'away_abbr':  away_abbr,
-            'home_score': int(hs)  if hs  is not None and str(hs).strip()  not in ('', 'None') else None,
-            'away_score': int(as_) if as_ is not None and str(as_).strip() not in ('', 'None') else None,
-            'status':     g.get('status', ''),
-            'time':       g.get('time', ''),
-            'date':       game_date,
-            'postseason': g.get('postseason', False),
-        })
+
+    # ── Primary: ESPN WNBA scoreboard (UTC times in ISO 8601) ─────────────────
+    d = start
+    while d <= end_:
+        try:
+            r = requests.get(
+                'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard',
+                params={'dates': d.strftime('%Y%m%d')},
+                timeout=10,
+            )
+            for ev in (r.json().get('events') or []):
+                comp0       = ev.get('competitions', [{}])[0]
+                competitors = comp0.get('competitors', [])
+                home_c = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+                away_c = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+                if not home_c or not away_c:
+                    continue
+                ht = home_c.get('team', {})
+                at = away_c.get('team', {})
+                ev_date   = ev.get('date', '')
+                game_date = ev_date[:10] if len(ev_date) >= 10 else d.strftime('%Y-%m-%d')
+                time_utc  = ev_date[11:16] if len(ev_date) >= 16 else ''
+                sname     = comp0.get('status', {}).get('type', {}).get('name', '')
+                if 'FINAL' in sname:
+                    status = 'Final'
+                elif 'PROGRESS' in sname:
+                    status = 'InProgress'
+                else:
+                    status = 'Scheduled'
+                hs  = home_c.get('score')
+                as_ = away_c.get('score')
+                result.append({
+                    'id':         ev.get('id'),
+                    'home_team':  ht.get('displayName', ''),
+                    'away_team':  at.get('displayName', ''),
+                    'home_abbr':  ht.get('abbreviation', ''),
+                    'away_abbr':  at.get('abbreviation', ''),
+                    'home_score': int(hs)  if hs  is not None and str(hs).strip() not in ('', 'None') else None,
+                    'away_score': int(as_) if as_ is not None and str(as_).strip() not in ('', 'None') else None,
+                    'status':     status,
+                    'time':       time_utc,
+                    'date':       game_date,
+                    'postseason': False,
+                })
+        except Exception:
+            pass
+        d += _td(days=1)
+
     if result:
         result.sort(key=lambda g: g['date'])
         return result
 
-    # ── Fallback: TheSportsDB per-day loop ────────────────────────────────────
-    start = _dtt.strptime(start_date, '%Y-%m-%d').date()
-    end_  = _dtt.strptime(end_date,   '%Y-%m-%d').date()
+    # ── Fallback: TheSportsDB WNBA per-day (l=4328) ───────────────────────────
     d = start
     while d <= end_:
         date_str = d.strftime('%Y-%m-%d')

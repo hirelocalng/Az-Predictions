@@ -627,6 +627,25 @@ body::after {
 .res-pred-val { font-size: 0.8rem; font-weight: 600; color: var(--text-2); }
 .res-score-val { font-size: 0.82rem; font-weight: 700; color: var(--text); }
 .res-row-date { font-size: 0.7rem; color: var(--text-muted); margin-left: auto; }
+
+/* Per-market sub-results breakdown */
+.res-sub-row {
+  width: 100%; display: flex; flex-wrap: wrap; gap: 6px;
+  padding-top: 10px; margin-top: 4px;
+  border-top: 1px solid var(--border);
+}
+.res-sub-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 0.65rem; font-weight: 600;
+  padding: 3px 9px; border-radius: 20px; border: 1px solid transparent;
+}
+.res-sub-chip.won  { background: var(--green-dim); color: var(--green); border-color: var(--green-border); }
+.res-sub-chip.lost { background: var(--red-dim);   color: var(--red);   border-color: rgba(255,77,109,.25); }
+.res-sub-chip.na   { background: rgba(255,255,255,.04); color: var(--text-muted); border-color: var(--border); }
+.res-sub-label { text-transform: uppercase; letter-spacing: 0.08em; opacity: 0.75; }
+.res-sub-val   { font-weight: 700; }
+.res-sub-icon  { font-size: 0.7rem; }
+
 .res-empty { text-align: center; padding: 60px 24px; color: var(--text-muted); }
 .res-empty-icon { font-size: 2.4rem; margin-bottom: 12px; }
 .res-empty-sub { font-size: 0.78rem; color: var(--text-subtle); margin-top: 6px; }

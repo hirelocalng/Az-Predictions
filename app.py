@@ -826,6 +826,54 @@ def _get_result(home_team, away_team, match_date):
     return None
 
 
+def _sub_results(pred):
+    """
+    Compute per-market WON/LOST for all four prediction markets.
+    Returns a dict or None if actual scores are not yet available.
+    """
+    hs  = pred.get('actual_home_score')
+    as_ = pred.get('actual_away_score')
+    if hs is None or as_ is None:
+        return None
+
+    home_l  = (pred.get('home_team') or '').lower()
+    away_l  = (pred.get('away_team') or '').lower()
+    total   = hs + as_
+    sub     = {}
+
+    # Result
+    pw = (pred.get('predicted_winner') or '').lower()
+    if pw:
+        if hs > as_:
+            ok = home_l in pw
+        elif as_ > hs:
+            ok = away_l in pw
+        else:
+            ok = 'draw' in pw
+        sub['result'] = 'WON' if ok else 'LOST'
+
+    # Goals Over/Under
+    pg = (pred.get('predicted_goals') or '').lower()
+    if pg:
+        predicted_over = 'over' in pg
+        thresh = 3.5 if '3.5' in pg else 2.5
+        actual_over    = total > thresh
+        sub['goals'] = 'WON' if predicted_over == actual_over else 'LOST'
+
+    # BTTS
+    pbtts = (pred.get('predicted_btts') or '').lower()
+    if pbtts in ('yes', 'no'):
+        predicted_yes = pbtts == 'yes'
+        actual_btts   = hs > 0 and as_ > 0
+        sub['btts'] = 'WON' if predicted_yes == actual_btts else 'LOST'
+
+    # Corners — no actual corner data stored; mark as unverifiable
+    if pred.get('predicted_corners'):
+        sub['corners'] = None
+
+    return sub
+
+
 def _resolve_result(pw, home, away, hs, as_):
     """Return 'WON' or 'LOST' for any bet type given actual score."""
     if not pw:
@@ -1675,6 +1723,10 @@ def results_history():
                 pass
 
     finished = sorted(finished, key=lambda p: p.get('match_date', ''), reverse=True)
+
+    # Attach per-market sub-results to each finished prediction
+    for p in finished:
+        p['sub_results'] = _sub_results(p)
 
     resolved   = [p for p in finished if p['result_status'] in ('WON', 'LOST')]
     won        = sum(1 for p in resolved if p['result_status'] == 'WON')

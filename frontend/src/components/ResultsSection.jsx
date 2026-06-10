@@ -10,10 +10,24 @@ function StatCard({ value, label, sub, color }) {
   )
 }
 
+function SubChip({ label, value, status }) {
+  const cls = status === 'WON' ? 'won' : status === 'LOST' ? 'lost' : 'na'
+  const icon = status === 'WON' ? '✅' : status === 'LOST' ? '❌' : '—'
+  return (
+    <span className={`res-sub-chip ${cls}`}>
+      <span className="res-sub-label">{label}</span>
+      <span className="res-sub-val">{value}</span>
+      <span className="res-sub-icon">{icon}</span>
+    </span>
+  )
+}
+
 function ResultRow({ pred }) {
   const status   = pred.result_status
   const won      = status === 'WON'
   const resolved = status === 'WON' || status === 'LOST'
+  const sub      = pred.sub_results   // { result, goals, btts, corners } or null
+
   const date = pred.match_date
     ? new Date(pred.match_date + 'T12:00:00Z').toLocaleDateString('en-GB', {
         day: 'numeric', month: 'short', timeZone: 'UTC',
@@ -26,6 +40,7 @@ function ResultRow({ pred }) {
 
   return (
     <div className={`res-row ${won ? 'res-row-won' : resolved ? 'res-row-lost' : 'res-row-pending'}`}>
+      {/* Top row */}
       <div className="res-row-badge">
         {won      ? <span className="res-badge won">✅ WON</span>
          : resolved ? <span className="res-badge lost">❌ LOST</span>
@@ -41,7 +56,7 @@ function ResultRow({ pred }) {
       <div className="res-row-comp">{pred.competition}</div>
 
       <div className="res-row-pred">
-        <span className="res-pred-label">Prediction</span>
+        <span className="res-pred-label">Best Bet</span>
         <span className="res-pred-val">{pred.predicted_winner || '—'}</span>
       </div>
 
@@ -51,6 +66,24 @@ function ResultRow({ pred }) {
       </div>
 
       <div className="res-row-date">{date}</div>
+
+      {/* Per-market breakdown — only for finished matches with score data */}
+      {resolved && sub && (
+        <div className="res-sub-row">
+          {sub.result !== undefined && pred.predicted_winner && (
+            <SubChip label="Result" value={pred.predicted_winner} status={sub.result} />
+          )}
+          {sub.goals !== undefined && pred.predicted_goals && (
+            <SubChip label="Goals" value={pred.predicted_goals} status={sub.goals} />
+          )}
+          {sub.btts !== undefined && pred.predicted_btts && (
+            <SubChip label="BTTS" value={`BTTS ${pred.predicted_btts}`} status={sub.btts} />
+          )}
+          {sub.corners !== undefined && pred.predicted_corners && (
+            <SubChip label="Corners" value={pred.predicted_corners} status={sub.corners} />
+          )}
+        </div>
+      )}
     </div>
   )
 }

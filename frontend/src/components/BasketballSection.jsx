@@ -135,11 +135,11 @@ function BballSkeleton() {
 // ── Empty state ───────────────────────────────────────────────────────────────
 
 function Empty({ sport }) {
+  const label = sport === 'nba' ? 'NBA' : 'WNBA'
   return (
     <div className="bball-empty">
-      <div className="bball-empty-icon">{sport === 'wnba' ? '🏀' : '🏀'}</div>
-      <p>No {sport.toUpperCase()} games scheduled today.</p>
-      <p className="bball-empty-sub">Check back tomorrow for the latest predictions.</p>
+      <div className="bball-empty-icon">🏀</div>
+      <p>No {label} games today — check back tomorrow.</p>
     </div>
   )
 }
@@ -200,12 +200,7 @@ export default function BasketballSection() {
         </button>
       </div>
 
-      {/* Accuracy note for WNBA */}
-      {tab === 'wnba' && (
-        <div className="bball-wnba-note">
-          WNBA predictions are based on historical team form patterns (2020 season data).
-        </div>
-      )}
+
 
       {loading && <BballSkeleton />}
 

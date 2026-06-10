@@ -953,21 +953,6 @@ body::after {
   color: var(--text);
 }
 
-/* WNBA note */
-.bball-wnba-note {
-  text-align: center;
-  font-size: 0.78rem;
-  color: var(--amber);
-  background: var(--amber-dim);
-  border: 1px solid var(--amber-border);
-  border-radius: var(--r-sm);
-  padding: 8px 16px;
-  margin-bottom: 20px;
-  max-width: 580px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
 /* Card grid */
 .bball-grid {
   display: grid;

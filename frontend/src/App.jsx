@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import logoSrc from './assets/logo.png'
 import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
@@ -43,19 +44,6 @@ function TelegramFloat() {
   )
 }
 
-// ── Logo ──────────────────────────────────────────────────────────────────────
-
-const LogoIcon = () => (
-  <svg viewBox="0 0 24 16" fill="none">
-    <circle cx="22" cy="1.5" r="5" fill="var(--green)" opacity="0.10" />
-    <path d="M1 14.5 L6.5 8.5 L11 11 L16 4" stroke="var(--green)" strokeWidth="2.2"
-          strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M16 4 L22 1.5" stroke="var(--green)" strokeWidth="2.2"
-          strokeLinecap="round" strokeDasharray="2.8 2.2" opacity="0.5" />
-    <circle cx="22" cy="1.5" r="2.4" fill="var(--green)" className="logo-dot-pulse" />
-  </svg>
-)
-
 // ── Header ────────────────────────────────────────────────────────────────────
 
 function Header({ auth, onLogout, navigate }) {
@@ -64,10 +52,17 @@ function Header({ auth, onLogout, navigate }) {
   return (
     <header className="header">
       <div className="header-logo" style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
-        <div className="logo-mark"><LogoIcon /></div>
-        <span className="logo-word">AZ</span>
-        <span className="logo-sep"> </span>
-        <span className="logo-accent">PREDICTIONS</span>
+        <img
+          src={logoSrc}
+          alt="AZ Predictions"
+          style={{
+            height: '40px',
+            width: 'auto',
+            mixBlendMode: 'lighten',
+            filter: 'brightness(1.1)',
+            display: 'block',
+          }}
+        />
       </div>
 
       <div className="header-right">

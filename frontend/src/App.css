@@ -91,25 +91,9 @@ body::after {
 }
 
 .header-logo {
-  font-size: 0.78rem; font-weight: 700;
-  letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--text); display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center;
   cursor: pointer; user-select: none; flex-shrink: 0;
-  text-decoration: none;
 }
-
-.logo-mark {
-  width: 32px; height: 32px; border-radius: 8px;
-  background: linear-gradient(135deg, rgba(0,208,132,.18), rgba(0,208,132,.06));
-  border: 1px solid rgba(0,208,132,.30);
-  box-shadow: 0 0 16px rgba(0,208,132,.08), inset 0 1px 0 rgba(0,208,132,.12);
-  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
-}
-.logo-mark svg { width: 18px; height: 12px; overflow: visible; }
-.logo-word   { color: var(--text); }
-.logo-sep    { color: var(--text-subtle); font-weight: 300; }
-.logo-accent { color: var(--green); }
-.logo-dot-pulse { animation: pulse 2.8s ease-in-out infinite; }
 
 .nav-btn {
   background: transparent; border: 1px solid transparent;

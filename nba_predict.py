@@ -526,7 +526,7 @@ def get_wnba_fixtures(start_date=None, end_date=None):
                 ht = home_c.get('team', {})
                 at = away_c.get('team', {})
                 ev_date   = ev.get('date', '')
-                game_date = ev_date[:10] if len(ev_date) >= 10 else d.strftime('%Y-%m-%d')
+                game_date = d.strftime('%Y-%m-%d')           # use query date, not UTC ISO date
                 time_utc  = ev_date[11:16] if len(ev_date) >= 16 else ''
                 sname     = comp0.get('status', {}).get('type', {}).get('name', '')
                 if 'FINAL' in sname:

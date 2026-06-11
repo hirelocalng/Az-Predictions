@@ -911,6 +911,9 @@ def _get_result(home_team, away_team, match_date):
     r = _fetch_espn_result(home_team, away_team)
     if r:
         return r
+    r = _fetch_espn_result_dated(home_team, away_team, match_date)
+    if r:
+        return r
     return None
 
 
@@ -1009,8 +1012,9 @@ def _resolve_result(pw, home, away, hs, as_):
 
 
 def _get_nba_game_result(home, away, match_date):
-    """Fetch NBA game result from BallDontLie."""
+    """Fetch NBA game result from BallDontLie → TheSportsDB → ESPN."""
     import requests as _req
+    # BallDontLie (free, misses playoffs/Finals)
     try:
         r = _req.get(
             'https://www.balldontlie.io/api/v1/games',
@@ -1027,13 +1031,61 @@ def _get_nba_game_result(home, away, match_date):
             if _team_similar(ht, home) and _team_similar(at, away):
                 return int(hs), int(as_)
     except Exception as e:
-        _log.warning('NBA result check: %s', e)
+        _log.warning('NBA result BDL: %s', e)
+    # TheSportsDB l=4387 (covers playoffs)
+    try:
+        r = _req.get(
+            'https://www.thesportsdb.com/api/v1/json/3/eventsday.php',
+            params={'d': match_date, 'l': '4387'},
+            timeout=10,
+        )
+        for ev in (r.json().get('events') or []):
+            hs_r = ev.get('intHomeScore')
+            as_r = ev.get('intAwayScore')
+            if hs_r is None or as_r is None:
+                continue
+            if str(hs_r).strip() in ('', 'None') or str(as_r).strip() in ('', 'None'):
+                continue
+            eh = ev.get('strHomeTeam', '')
+            ea = ev.get('strAwayTeam', '')
+            if _team_similar(eh, home) and _team_similar(ea, away):
+                return int(float(hs_r)), int(float(as_r))
+    except Exception as e:
+        _log.warning('NBA result TSDB: %s', e)
+    # ESPN NBA scoreboard (date-filtered)
+    try:
+        r = _req.get(
+            'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+            params={'dates': str(match_date).replace('-', '')},
+            timeout=10,
+        )
+        for ev in (r.json().get('events') or []):
+            comp0 = (ev.get('competitions') or [{}])[0]
+            sname = comp0.get('status', {}).get('type', {}).get('name', '')
+            if 'FINAL' not in sname.upper():
+                continue
+            competitors = comp0.get('competitors') or []
+            hc = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+            ac = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+            if not hc or not ac:
+                continue
+            hn  = hc.get('team', {}).get('displayName', '')
+            an  = ac.get('team', {}).get('displayName', '')
+            hs  = hc.get('score')
+            as_ = ac.get('score')
+            if hs is None or as_ is None:
+                continue
+            if _team_similar(hn, home) and _team_similar(an, away):
+                return int(hs), int(as_)
+    except Exception as e:
+        _log.warning('NBA result ESPN: %s', e)
     return None
 
 
 def _get_wnba_game_result(home, away, match_date):
-    """Fetch WNBA game result from TheSportsDB."""
+    """Fetch WNBA game result from TheSportsDB → ESPN."""
     import requests as _req
+    # TheSportsDB l=4328
     try:
         r = _req.get(
             'https://www.thesportsdb.com/api/v1/json/3/eventsday.php',
@@ -1043,14 +1095,43 @@ def _get_wnba_game_result(home, away, match_date):
         for ev in (r.json().get('events') or []):
             hs_r = ev.get('intHomeScore')
             as_r = ev.get('intAwayScore')
-            if not hs_r or not as_r:
+            if hs_r is None or as_r is None:
+                continue
+            if str(hs_r).strip() in ('', 'None') or str(as_r).strip() in ('', 'None'):
                 continue
             eh = ev.get('strHomeTeam', '')
             ea = ev.get('strAwayTeam', '')
             if _team_similar(eh, home) and _team_similar(ea, away):
-                return int(hs_r), int(as_r)
+                return int(float(hs_r)), int(float(as_r))
     except Exception as e:
-        _log.warning('WNBA result check: %s', e)
+        _log.warning('WNBA result TSDB: %s', e)
+    # ESPN WNBA scoreboard (date-filtered, primary fixture source)
+    try:
+        r = _req.get(
+            'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard',
+            params={'dates': str(match_date).replace('-', '')},
+            timeout=10,
+        )
+        for ev in (r.json().get('events') or []):
+            comp0 = (ev.get('competitions') or [{}])[0]
+            sname = comp0.get('status', {}).get('type', {}).get('name', '')
+            if 'FINAL' not in sname.upper():
+                continue
+            competitors = comp0.get('competitors') or []
+            hc = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+            ac = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+            if not hc or not ac:
+                continue
+            hn  = hc.get('team', {}).get('displayName', '')
+            an  = ac.get('team', {}).get('displayName', '')
+            hs  = hc.get('score')
+            as_ = ac.get('score')
+            if hs is None or as_ is None:
+                continue
+            if _team_similar(hn, home) and _team_similar(an, away):
+                return int(hs), int(as_)
+    except Exception as e:
+        _log.warning('WNBA result ESPN: %s', e)
     return None
 
 
@@ -1117,7 +1198,9 @@ def _check_pending_results():
                 cur.execute("""
                     SELECT match_id, home_team, away_team, match_date,
                            predicted_winner, kickoff_utc
-                    FROM predictions WHERE result_status IN ('PENDING', 'LIVE')
+                    FROM predictions
+                    WHERE result_status IN ('PENDING', 'LIVE')
+                      AND (sport IS NULL OR sport NOT IN ('nba', 'wnba'))
                 """)
                 pending = cur.fetchall()
                 for mid, home, away, match_date, pw, kickoff_str in pending:
@@ -1200,6 +1283,9 @@ def _check_pending_results():
 _ESPN_LIVE_LEAGUES = [
     'fifa.world', 'fifa.friendly',
     'uefa.friendly', 'conmebol.friendly',
+    'concacaf.friendly',     # CONCACAF international friendlies
+    'afc.friendly',          # Asian international friendlies
+    'caf.friendly',          # African international friendlies
     'afc.cupqualification',  # Asian World Cup Qualifying
     'caf.nations',           # Africa Cup of Nations
     'concacaf.nations.league',
@@ -1270,12 +1356,44 @@ _ESPN_DONE = frozenset({
 })
 
 
-def _fetch_espn_result(home_team, away_team):
-    """Return (home_score, away_score) from ESPN if match is fully finished, else None."""
-    espn = _fetch_espn_events()
-    ev   = _espn_match(espn, home_team, away_team)
-    if ev and ev.get('espn_status') in _ESPN_DONE:
-        return ev['home_score'], ev['away_score']
+def _fetch_espn_result_dated(home_team, away_team, match_date):
+    """Like _fetch_espn_result but queries ESPN with a specific date — catches past-day results."""
+    import requests as _req
+    date_compact = str(match_date).replace('-', '')
+    for slug in _ESPN_LIVE_LEAGUES:
+        url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard'
+        try:
+            r = _req.get(url, params={'dates': date_compact}, timeout=8)
+            if r.status_code != 200:
+                continue
+            for ev in (r.json().get('events') or []):
+                comp = (ev.get('competitions') or [{}])[0]
+                sname = comp.get('status', {}).get('type', {}).get('name', '')
+                if sname not in _ESPN_DONE:
+                    continue
+                competitors = comp.get('competitors') or []
+                hc = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+                ac = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+                if not hc or not ac:
+                    continue
+                hn  = (hc.get('team', {}).get('displayName') or '').strip()
+                an  = (ac.get('team', {}).get('displayName') or '').strip()
+                hs  = int(hc.get('score') or 0)
+                as_ = int(ac.get('score') or 0)
+                corners = None
+                for stat in (comp.get('statistics') or []):
+                    if stat.get('name', '').lower() in ('cornerkicks', 'corners', 'corner kicks'):
+                        try:
+                            corners = int(stat.get('displayValue') or '0')
+                        except (ValueError, TypeError):
+                            pass
+                        break
+                if _team_similar(hn, home_team) and _team_similar(an, away_team):
+                    return hs, as_, corners
+                if _team_similar(hn, away_team) and _team_similar(an, home_team):
+                    return as_, hs, corners
+        except Exception as exc:
+            _log.warning('ESPN dated result %s: %s', slug, exc)
     return None
 
 
@@ -2440,16 +2558,16 @@ try:
     _scheduler = _BgSched(daemon=True)
     _scheduler.add_job(_update_live_scores, 'interval', minutes=2,
                        id='live_checker', misfire_grace_time=60)
-    _scheduler.add_job(_check_pending_results, 'interval', minutes=15,
+    _scheduler.add_job(_check_pending_results, 'interval', minutes=30,
                        id='results_checker', misfire_grace_time=120)
-    _scheduler.add_job(_check_basketball_results, 'interval', minutes=15,
+    _scheduler.add_job(_check_basketball_results, 'interval', minutes=30,
                        id='basketball_checker', misfire_grace_time=120)
     _scheduler.add_job(_refresh_caches, 'interval', hours=6,
                        id='cache_refresh', misfire_grace_time=300)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
-    _log.info('APScheduler started — live/2 min, results/15 min, cache/6 h')
+    _log.info('APScheduler started — live/2 min, results/30 min, cache/6 h')
     try:
         _check_pending_results()
     except Exception as _cpr_err:

@@ -936,7 +936,7 @@ body::after {
 }
 @media (max-width: 480px) {
   .hero-title { font-size: 2.2rem; }
-  .header { padding: 0 16px; }
+  .header { padding: 0 16px 4px; }  /* keep bottom padding so nav strip isn't flush */
   .auth-card { margin: 20px 16px 0; }
   .sub-container { padding: 0 16px; }
   .hero-metrics { gap: 20px; }

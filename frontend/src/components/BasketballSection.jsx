@@ -223,17 +223,22 @@ export default function BasketballSection() {
   const [nbaErr,    setNbaErr]    = useState(null)
   const [wnbaErr,   setWnbaErr]   = useState(null)
 
+  const isFinished = g => {
+    const s = (g.status || '').toLowerCase()
+    return s === 'final' || s === 'ft' || s === 'finished' || s.includes('final')
+  }
+
   useEffect(() => {
     fetch('/api/nba/fixtures')
       .then(r => r.json())
-      .then(d => setNbaGames(Array.isArray(d) ? d : []))
+      .then(d => setNbaGames(Array.isArray(d) ? d.filter(g => !isFinished(g)) : []))
       .catch(e => setNbaErr(e.message))
   }, [])
 
   useEffect(() => {
     fetch('/api/wnba/fixtures')
       .then(r => r.json())
-      .then(d => setWnbaGames(Array.isArray(d) ? d : []))
+      .then(d => setWnbaGames(Array.isArray(d) ? d.filter(g => !isFinished(g)) : []))
       .catch(e => setWnbaErr(e.message))
   }, [])
 

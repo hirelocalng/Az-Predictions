@@ -111,8 +111,6 @@ body::after {
 .logo-accent { color: var(--green); }
 .logo-dot-pulse { animation: pulse 2.8s ease-in-out infinite; }
 
-.header-nav { display: flex; gap: 2px; flex: 1; justify-content: center; }
-
 .nav-btn {
   background: transparent; border: 1px solid transparent;
   color: var(--text-muted); padding: 6px 13px; border-radius: 7px;
@@ -872,25 +870,7 @@ body::after {
 .res-list { display: flex; flex-direction: column; gap: 10px; }
 
 @media (max-width: 768px) {
-  /* Make header wrap so nav becomes a scrollable second row */
-  .header { height: auto; flex-wrap: wrap; padding-bottom: 4px; }
-  .header-logo { flex: 1; }
-  .header-right { flex-shrink: 0; }
-  .header-nav {
-    order: 10;
-    width: 100%;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    justify-content: flex-start;
-    border-top: 1px solid rgba(255,255,255,0.06);
-    padding: 4px 0 2px;
-    gap: 2px;
-  }
-  .header-nav::-webkit-scrollbar { display: none; }
-  .nav-btn { flex-shrink: 0; padding: 5px 9px; font-size: 0.7rem; }
-  /* Push main content below the taller two-row header */
-  main { padding-top: 96px !important; }
+  .nav-btn { padding: 5px 10px; font-size: 0.74rem; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .auth-card { padding: 28px 22px; margin-top: 32px; }
   .plan-grid { grid-template-columns: 1fr; }
@@ -936,7 +916,7 @@ body::after {
 }
 @media (max-width: 480px) {
   .hero-title { font-size: 2.2rem; }
-  .header { padding: 0 16px 4px; }  /* keep bottom padding so nav strip isn't flush */
+  .header { padding: 0 16px; }
   .auth-card { margin: 20px 16px 0; }
   .sub-container { padding: 0 16px; }
   .hero-metrics { gap: 20px; }

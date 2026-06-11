@@ -58,41 +58,17 @@ const LogoIcon = () => (
 
 // ── Header ────────────────────────────────────────────────────────────────────
 
-function Header({ active, setActive, auth, onLogout, navigate }) {
-  const scrollTo  = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+function Header({ auth, onLogout, navigate }) {
   const isPremium = Boolean(auth?.user?.is_premium)
 
   return (
     <header className="header">
       <div className="header-logo" style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
         <div className="logo-mark"><LogoIcon /></div>
-        <span className="logo-word">Az</span>
-        <span className="logo-sep">·</span>
-        <span className="logo-accent">Predictions</span>
+        <span className="logo-word">AZ</span>
+        <span className="logo-sep"> </span>
+        <span className="logo-accent">PREDICTIONS</span>
       </div>
-
-      <nav className="header-nav">
-        {[
-          ['best-bet',    '⭐ Best Bet'],
-          ['daily-tips',  "Today's Tips"],
-          ['worldcup',    'World Cup 2026'],
-          ['intl',        'Internationals'],
-          ['nba',         '🏀 NBA'],
-          ['wnba',        '🏀 WNBA'],
-          ['club',        'Club Tips'],
-          ['history',     'History'],
-        ].map(([id, label]) => (
-          <button key={id}
-            className={`nav-btn${active === id ? ' active' : ''}`}
-            onClick={() => {
-              setActive(id)
-              const target = id === 'nba' ? 'nba-section' : id === 'wnba' ? 'wnba-section' : id
-              scrollTo(target)
-            }}>
-            {label}
-          </button>
-        ))}
-      </nav>
 
       <div className="header-right">
         {auth ? (
@@ -101,7 +77,6 @@ function Header({ active, setActive, auth, onLogout, navigate }) {
               ? <span className="premium-badge" title="Premium member">👑 Premium</span>
               : <button className="nav-btn nav-upgrade" onClick={() => navigate('/subscribe')}>Upgrade</button>
             }
-            <span className="user-name">{auth.user.name.split(' ')[0]}</span>
             <button className="nav-btn" onClick={onLogout}>Log out</button>
           </div>
         ) : (
@@ -230,10 +205,9 @@ export default function App() {
     <AuthContext.Provider value={authCtx}>
       <LiveScoresContext.Provider value={liveScores}>
         <div className="app">
-          <Header active={active} setActive={setActive}
-                  auth={auth} onLogout={logout} navigate={navigate} />
+          <Header auth={auth} onLogout={logout} navigate={navigate} />
 
-          <main style={{ paddingTop: 60 }}>
+          <main style={{ paddingTop: 62 }}>
             <Hero
               onBestBet={() => { setActive('best-bet');    scrollTo('best-bet')    }}
               onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}

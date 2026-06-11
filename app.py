@@ -1136,7 +1136,7 @@ def _get_wnba_game_result(home, away, match_date):
 
 
 def _check_basketball_results():
-    """Hourly job: fetch final scores for PENDING NBA/WNBA predictions."""
+    """30-min job: fetch final scores for PENDING NBA/WNBA predictions."""
     _log.info('Basketball results check: scanning pending...')
     now = datetime.now(timezone.utc)
     resolved = 0
@@ -1162,7 +1162,16 @@ def _check_basketball_results():
                             continue
                     except Exception:
                         continue
-                    if kickoff + timedelta(hours=3) > now:
+                    if kickoff + timedelta(hours=2) > now:
+                        continue
+                    # Games stuck PENDING for >3 days: mark LOST (result unrecoverable)
+                    if now - kickoff > timedelta(days=3):
+                        cur.execute("""
+                            UPDATE predictions SET result_status='LOST', match_status='FINISHED'
+                            WHERE match_id=%s
+                        """, (mid,))
+                        _log.info('Basketball stale PENDING → LOST: %s vs %s (%s)', home, away, match_date)
+                        resolved += 1
                         continue
                     res = (_get_nba_game_result(home, away, str(match_date))
                            if sport == 'nba'
@@ -1219,6 +1228,15 @@ def _check_pending_results():
                     except Exception:
                         continue
                     if kickoff + timedelta(hours=2) > now:
+                        continue
+                    # Games stuck PENDING for >5 days: mark LOST (result unrecoverable)
+                    if now - kickoff > timedelta(days=5):
+                        cur.execute("""
+                            UPDATE predictions SET result_status='LOST', match_status='FINISHED'
+                            WHERE match_id=%s
+                        """, (mid,))
+                        _log.info('Stale PENDING → LOST: %s vs %s (%s)', home, away, match_date)
+                        resolved += 1
                         continue
                     result = _get_result(home, away, match_date)
                     if result is None:
@@ -1425,7 +1443,7 @@ def _update_live_scores():
                                        else datetime.fromisoformat(f'{match_date}T23:00:00+00:00'))
                         except Exception:
                             continue
-                        if kickoff + timedelta(hours=3) > now:
+                        if kickoff + timedelta(hours=2) > now:
                             continue
                         res = (_get_nba_game_result(home, away, str(match_date))
                                if sport == 'nba'
@@ -2280,7 +2298,9 @@ def results_history():
                     ko = datetime.fromisoformat(f"{p['match_date']}T23:00:00+00:00")
                 else:
                     continue
-                if ko + timedelta(hours=2) < now:
+                # Show recently-played pending games (being resolved); hide stale ones
+                stale_days = 3 if p.get('sport') in ('nba', 'wnba') else 5
+                if ko + timedelta(hours=2) < now < ko + timedelta(days=stale_days):
                     finished.append(p)
             except Exception:
                 pass

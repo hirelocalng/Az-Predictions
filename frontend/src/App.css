@@ -97,10 +97,10 @@ body::after {
 }
 
 .header-logo img {
-  height: 40px; width: auto; display: block;
-  background: transparent;
-  mix-blend-mode: lighten;
-  filter: brightness(1.15) contrast(1.05);
+  height: 44px; width: auto; display: block;
+  /* Invert black→white so logo is readable on dark header.
+     hue-rotate(180deg) restores the original gold hue after inversion. */
+  filter: invert(1) hue-rotate(180deg) brightness(1.15) drop-shadow(0 0 6px rgba(201,146,42,0.5));
 }
 
 .nav-btn {

@@ -2365,22 +2365,6 @@ def results_history():
     for p in finished:
         p['sub_results'] = _sub_results(p)
 
-    resolved   = [p for p in finished if p['result_status'] in ('WON', 'LOST')]
-    won        = sum(1 for p in resolved if p['result_status'] == 'WON')
-    lost       = len(resolved) - won
-    win_rate   = round(won / len(resolved) * 100, 1) if resolved else 0.0
-
-    streak = 0
-    streak_type = None
-    for p in resolved:
-        if streak_type is None:
-            streak_type = p['result_status']
-            streak = 1
-        elif p['result_status'] == streak_type:
-            streak += 1
-        else:
-            break
-
     # Filter list: PENDING/LIVE always shown; resolved only if at least one market is WON
     def _has_any_won(p):
         if p['result_status'] in ('PENDING', 'LIVE'):
@@ -2390,11 +2374,34 @@ def results_history():
 
     display = [p for p in finished if _has_any_won(p)]
 
+    # Stats from visible (display) resolved games only, counted per individual outcome
+    display_resolved = [p for p in display if p['result_status'] in ('WON', 'LOST')]
+    total_outcomes = 0
+    won_outcomes   = 0
+    for p in display_resolved:
+        for v in (p.get('sub_results') or {}).values():
+            if v in ('WON', 'LOST'):   # skip None / no-data
+                total_outcomes += 1
+                if v == 'WON':
+                    won_outcomes += 1
+
+    win_rate = round(won_outcomes / total_outcomes * 100, 1) if total_outcomes else 0.0
+
+    streak = 0
+    streak_type = None
+    for p in display_resolved:
+        if streak_type is None:
+            streak_type = p['result_status']
+            streak = 1
+        elif p['result_status'] == streak_type:
+            streak += 1
+        else:
+            break
+
     return jsonify({
         'stats': {
-            'total':       len(resolved),
-            'won':         won,
-            'lost':        lost,
+            'total':       total_outcomes,
+            'won':         won_outcomes,
             'win_rate':    win_rate,
             'streak':      streak,
             'streak_type': streak_type,

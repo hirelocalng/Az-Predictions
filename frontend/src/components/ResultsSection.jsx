@@ -153,7 +153,6 @@ export default function ResultsSection() {
         />
         <StatCard value={stats.total ?? 0}  label="Total Bets" />
         <StatCard value={stats.won  ?? 0}   label="Won"   color="green" />
-        <StatCard value={stats.lost ?? 0}   label="Lost"  color="red"   />
         {streak && (
           <StatCard
             value={streak}

@@ -2519,12 +2519,26 @@ def payment_verify():
         if r.status_code != 200:
             return jsonify({'error': 'Korapay verification failed', 'detail': r.text}), 502
         data = r.json().get('data', {})
+        _log.info('Korapay verify raw: status=%s amount=%r metadata=%r',
+                  data.get('status'), data.get('amount'), data.get('metadata'))
         if data.get('status') != 'success':
             return jsonify({'error': 'Payment not successful', 'status': data.get('status')}), 400
-        amount  = data.get('amount', 0)           # Naira
-        days    = 90 if amount >= 14_000 else 30
+        # Cast amount to float — Korapay may return it as a string
+        try:
+            amount = float(data.get('amount') or 0)
+        except (ValueError, TypeError):
+            amount = 0.0
+        # Prefer plan from metadata; fall back to amount threshold
+        meta = data.get('metadata') or {}
+        plan = str(meta.get('plan', '')).lower()
+        if plan == '3month' or amount >= 14_000:
+            days = 90
+        else:
+            days = 30
         now_u   = datetime.now(timezone.utc)
         expires = now_u + timedelta(days=days)
+        _log.info('Granting premium: user_id=%s plan=%s amount=%s days=%d expires=%s',
+                  user['id'], plan or 'amount-based', amount, days, expires.date())
         with _db() as (conn, cur):
             if conn is None:
                 return jsonify({'error': 'DB unavailable'}), 503
@@ -2535,6 +2549,7 @@ def payment_verify():
         updated = _get_current_user()
         return jsonify({'success': True, 'user': updated or user})
     except Exception as e:
+        _log.warning('payment_verify error: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

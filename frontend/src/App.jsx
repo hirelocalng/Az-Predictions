@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import logoSrc from './assets/logo.png'
 import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
@@ -53,7 +52,7 @@ function Header({ auth, onLogout, navigate }) {
     <header className="header">
       <div className="header-logo" style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
         <img
-          src={logoSrc}
+          src="/logo.png"
           alt="AZ Predictions"
           style={{
             height: '40px',

@@ -2310,7 +2310,10 @@ def wnba_fixtures():
 @app.route('/api/results')
 def results_history():
     """Return completed prediction history with stats."""
-    now   = datetime.now(timezone.utc)
+    now  = datetime.now(timezone.utc)
+    user = _get_current_user()
+    is_premium = bool(user and user.get('is_premium'))
+
     data  = _get_history()
     preds = data.get('predictions', [])
 
@@ -2335,6 +2338,24 @@ def results_history():
                 pass
 
     finished = sorted(finished, key=lambda p: p.get('match_date', ''), reverse=True)
+
+    # Free-tier filter: basketball limited to first 2 per (date, sport) per day
+    if not is_premium:
+        _bball_seen: dict = {}
+        free_list = []
+        # Sort within each day by match_id for a deterministic "first 2" selection
+        for p in sorted(finished, key=lambda x: (
+                x.get('match_date', ''), x.get('sport', ''), x.get('match_id', ''))):
+            sport = p.get('sport', 'football')
+            if sport in ('nba', 'wnba'):
+                key = (p.get('match_date', ''), sport)
+                n = _bball_seen.get(key, 0)
+                if n >= 2:
+                    continue   # premium-only — hide entirely from free users
+                _bball_seen[key] = n + 1
+            free_list.append(p)
+        # Restore date-DESC order after filtering
+        finished = sorted(free_list, key=lambda p: p.get('match_date', ''), reverse=True)
 
     # Attach per-market sub-results to each finished prediction
     for p in finished:

@@ -26,7 +26,6 @@ function groupByDate(games) {
   return Object.entries(map).sort(([a], [b]) => a.localeCompare(b))
 }
 
-/** Convert UTC "HH:MM" or "HH:MM:SS" time + date string to user's local time string. */
 function localKickoff(dateStr, timeStr) {
   if (!timeStr || typeof timeStr !== 'string') return null
   const m = timeStr.match(/^(\d{1,2}):(\d{2})/)
@@ -67,38 +66,6 @@ function WinBar({ homeTeam, awayTeam, homePct, awayPct }) {
   )
 }
 
-// ── Locked card (premium gate) ────────────────────────────────────────────────
-
-function LockedCard({ game, onUpgrade }) {
-  return (
-    <div className="bball-card bball-locked">
-      <div className="bball-locked-blur">
-        <div className="bball-teams">
-          <div className="bball-team home">
-            <span className="bball-team-name">{game.home_team}</span>
-          </div>
-          <div className="bball-vs">vs</div>
-          <div className="bball-team away">
-            <span className="bball-team-name">{game.away_team}</span>
-          </div>
-        </div>
-        <div className="bball-bar-wrap">
-          <div className="bball-bar">
-            <div className="bball-bar-home" style={{ width: '55%' }} />
-            <div className="bball-bar-away" style={{ width: '45%' }} />
-          </div>
-        </div>
-      </div>
-      <div className="bball-locked-overlay">
-        <div className="bball-locked-icon">👑</div>
-        <div className="bball-locked-title">Premium Pick</div>
-        <div className="bball-locked-sub">Unlock full predictions for all games</div>
-        <button className="bball-locked-btn" onClick={onUpgrade}>GO PREMIUM</button>
-      </div>
-    </div>
-  )
-}
-
 // ── Single game card ──────────────────────────────────────────────────────────
 
 function GameCard({ game }) {
@@ -130,7 +97,6 @@ function GameCard({ game }) {
 
   return (
     <div className={`bball-card${isDone ? ' bball-done' : isLive ? ' bball-live' : ''}`}>
-      {/* Header */}
       <div className="bball-card-header">
         <span className="bball-league">{game.competition}</span>
         <div className="bball-card-header-right">
@@ -142,7 +108,6 @@ function GameCard({ game }) {
         </div>
       </div>
 
-      {/* Teams */}
       <div className="bball-teams">
         <div className="bball-team home">
           <Logo src={game.home_logo} abbr={game.home_abbr} alt={game.home_team} />
@@ -157,11 +122,9 @@ function GameCard({ game }) {
         </div>
       </div>
 
-      {/* Win probability bar */}
       <WinBar homeTeam={game.home_team} awayTeam={game.away_team}
               homePct={homePct} awayPct={awayPct} />
 
-      {/* Predictions */}
       <div className="bball-preds">
         <div className="bball-pred-item">
           <span className="bball-pred-label">Winner</span>
@@ -176,7 +139,6 @@ function GameCard({ game }) {
         </div>
       </div>
 
-      {/* Best bet */}
       {bestBet && (
         <div className="bball-best-bet">
           <span className="bball-bb-star">★</span>
@@ -189,7 +151,24 @@ function GameCard({ game }) {
   )
 }
 
-// ── Sub-components ────────────────────────────────────────────────────────────
+// ── Premium teaser (replaces locked cards) ────────────────────────────────────
+
+function PremiumTeaser({ count, onUpgrade }) {
+  return (
+    <div className="bball-premium-teaser">
+      <span className="bball-pt-icon">👑</span>
+      <div className="bball-pt-body">
+        <span className="bball-pt-title">
+          {count} more prediction{count !== 1 ? 's' : ''} hidden
+        </span>
+        <span className="bball-pt-sub">Upgrade to Premium to unlock all daily picks</span>
+      </div>
+      <button className="bball-locked-btn" onClick={onUpgrade}>Go Premium</button>
+    </div>
+  )
+}
+
+// ── Skeletons / empty ─────────────────────────────────────────────────────────
 
 function BballSkeleton() {
   return (
@@ -208,14 +187,27 @@ function Empty({ sport }) {
   )
 }
 
+// ── Sport section ─────────────────────────────────────────────────────────────
+
 function SportSection({ id, title, games, err, isPremium, onUpgrade }) {
   const loading = games === null && !err
+
+  // Split free vs premium-only — free_tier undefined treated as free
+  const visibleGames = isPremium
+    ? (games || [])
+    : (games || []).filter(g => g.free_tier !== false)
+  const lockedCount = isPremium
+    ? 0
+    : (games || []).filter(g => g.free_tier === false).length
+
   return (
     <div className="bball-sport-section" id={id}>
       <div className="bball-sport-header">
         <span className="bball-sport-name">🏀 {title}</span>
-        {games && games.length > 0 && (
-          <span className="bball-sport-count">{games.length} game{games.length !== 1 ? 's' : ''}</span>
+        {visibleGames.length > 0 && (
+          <span className="bball-sport-count">
+            {visibleGames.length} game{visibleGames.length !== 1 ? 's' : ''}
+          </span>
         )}
       </div>
 
@@ -228,23 +220,26 @@ function SportSection({ id, title, games, err, isPremium, onUpgrade }) {
         </div>
       )}
 
-      {!loading && !err && games?.length === 0 && <Empty sport={id} />}
+      {!loading && !err && visibleGames.length === 0 && lockedCount === 0 && (
+        <Empty sport={id} />
+      )}
 
-      {!loading && !err && games?.length > 0 && (
+      {!loading && !err && visibleGames.length > 0 && (
         <div className="bball-days">
-          {groupByDate(games).map(([date, dayGames]) => (
+          {groupByDate(visibleGames).map(([date, dayGames]) => (
             <div key={date} className="bball-day-section">
               <div className="bball-day-header">{dateLabel(date)}</div>
               <div className="bball-grid">
-                {dayGames.map((g, i) =>
-                  !g.free_tier && !isPremium
-                    ? <LockedCard key={g.id || i} game={g} onUpgrade={onUpgrade} />
-                    : <GameCard   key={g.id || i} game={g} />
-                )}
+                {dayGames.map((g, i) => <GameCard key={g.id || i} game={g} />)}
               </div>
             </div>
           ))}
         </div>
+      )}
+
+      {/* Single teaser — no individual locked cards shown */}
+      {!loading && !isPremium && lockedCount > 0 && (
+        <PremiumTeaser count={lockedCount} onUpgrade={onUpgrade} />
       )}
     </div>
   )
@@ -295,14 +290,9 @@ export default function BasketballSection() {
         )}
       </div>
 
-      {/* Quick-jump buttons */}
       <div className="bball-tabs">
-        <button className="bball-tab" onClick={() => scrollTo('nba-section')}>
-          🏀 NBA
-        </button>
-        <button className="bball-tab" onClick={() => scrollTo('wnba-section')}>
-          🏀 WNBA
-        </button>
+        <button className="bball-tab" onClick={() => scrollTo('nba-section')}>🏀 NBA</button>
+        <button className="bball-tab" onClick={() => scrollTo('wnba-section')}>🏀 WNBA</button>
       </div>
 
       <SportSection id="nba-section"  title="NBA"  games={nbaGames}  err={nbaErr}

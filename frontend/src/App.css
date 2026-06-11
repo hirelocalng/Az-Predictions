@@ -1274,53 +1274,46 @@ body::after {
 }
 .bball-free-upgrade:hover { opacity: 0.8; }
 
-/* ── Locked (premium gate) card ──────────────────────────────────────────────── */
-.bball-locked {
-  position: relative;
-  overflow: hidden;
-  min-height: 160px;
+/* ── Premium teaser (single banner, replaces per-card locked overlay) ─────────── */
+.bball-premium-teaser {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 14px 18px;
+  background: rgba(240,165,0,0.06);
+  border: 1px solid rgba(240,165,0,0.18);
+  border-radius: var(--r);
 }
-.bball-locked-blur {
-  filter: blur(6px);
-  pointer-events: none;
-  user-select: none;
-  opacity: 0.5;
-  padding: 16px;
-}
-.bball-locked-overlay {
-  position: absolute;
-  inset: 0;
+.bball-pt-icon { font-size: 1.3rem; flex-shrink: 0; }
+.bball-pt-body {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  background: rgba(13,17,23,0.72);
-  backdrop-filter: blur(2px);
-  text-align: center;
-  padding: 16px;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
 }
-.bball-locked-icon { font-size: 1.6rem; }
-.bball-locked-title {
-  font-size: 0.95rem;
+.bball-pt-title {
+  font-size: 0.85rem;
   font-weight: 700;
   color: var(--amber);
 }
-.bball-locked-sub {
-  font-size: 0.75rem;
+.bball-pt-sub {
+  font-size: 0.72rem;
   color: var(--text-muted);
 }
 .bball-locked-btn {
-  margin-top: 8px;
+  flex-shrink: 0;
   background: linear-gradient(135deg, #c9922a, #e6b94a);
   color: #0d0d0d;
   border: none;
   border-radius: 8px;
-  padding: 8px 20px;
-  font-size: 0.8rem;
+  padding: 8px 16px;
+  font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 .bball-locked-btn:hover { opacity: 0.88; }
 

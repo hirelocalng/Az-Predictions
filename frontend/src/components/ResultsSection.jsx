@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from '../contexts/AuthContext.jsx'
 
 function StatCard({ value, label, sub, color }) {
   return (
@@ -109,17 +110,21 @@ function Skeleton() {
 }
 
 export default function ResultsSection() {
-  const [data, setData]       = useState(null)
-  const [error, setError]     = useState(null)
-  const [loading, setLoading] = useState(true)
+  const { auth } = useAuth()
+  const [data, setData]         = useState(null)
+  const [error, setError]       = useState(null)
+  const [loading, setLoading]   = useState(true)
   const [showList, setShowList] = useState(false)
 
   useEffect(() => {
-    fetch('/api/results')
+    const headers = auth?.token
+      ? { Authorization: `Bearer ${auth.token}` }
+      : {}
+    fetch('/api/results', { headers })
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })
-  }, [])
+  }, [auth?.token])
 
   const stats  = data?.stats  || {}
   const preds  = data?.predictions || []

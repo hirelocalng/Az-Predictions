@@ -81,10 +81,10 @@ body::after {
 .header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 200;
   height: 62px;
-  background: rgba(5,5,8,0.88);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  background: rgba(13,17,23,0.97);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  border-bottom: 1px solid #2a2a3a;
   display: flex; align-items: center; justify-content: space-between;
   padding: 0 24px;
   gap: 16px;
@@ -93,6 +93,14 @@ body::after {
 .header-logo {
   display: flex; align-items: center;
   cursor: pointer; user-select: none; flex-shrink: 0;
+  background: transparent; border: none; box-shadow: none;
+}
+
+.header-logo img {
+  height: 40px; width: auto; display: block;
+  background: transparent;
+  mix-blend-mode: lighten;
+  filter: brightness(1.15) contrast(1.05);
 }
 
 .nav-btn {
@@ -1207,6 +1215,69 @@ body::after {
   background: var(--border);
   margin: 36px 0;
 }
+
+/* ── Premium free-note ───────────────────────────────────────────────────────── */
+.bball-free-note {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+.bball-free-upgrade {
+  background: none; border: none; padding: 0;
+  color: var(--amber); cursor: pointer; font-size: inherit;
+  text-decoration: underline;
+}
+.bball-free-upgrade:hover { opacity: 0.8; }
+
+/* ── Locked (premium gate) card ──────────────────────────────────────────────── */
+.bball-locked {
+  position: relative;
+  overflow: hidden;
+  min-height: 160px;
+}
+.bball-locked-blur {
+  filter: blur(6px);
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.5;
+  padding: 16px;
+}
+.bball-locked-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(13,17,23,0.72);
+  backdrop-filter: blur(2px);
+  text-align: center;
+  padding: 16px;
+}
+.bball-locked-icon { font-size: 1.6rem; }
+.bball-locked-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--amber);
+}
+.bball-locked-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.bball-locked-btn {
+  margin-top: 8px;
+  background: linear-gradient(135deg, #c9922a, #e6b94a);
+  color: #0d0d0d;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 20px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+}
+.bball-locked-btn:hover { opacity: 0.88; }
 
 /* Card time (kickoff in local TZ) */
 .bball-card-header-right {

@@ -51,17 +51,7 @@ function Header({ auth, onLogout, navigate }) {
   return (
     <header className="header">
       <div className="header-logo" style={{ cursor: 'pointer' }} onClick={() => navigate('/')}>
-        <img
-          src="/logo.png"
-          alt="AZ Predictions"
-          style={{
-            height: '40px',
-            width: 'auto',
-            mixBlendMode: 'lighten',
-            filter: 'brightness(1.1)',
-            display: 'block',
-          }}
-        />
+        <img src="/logo.png" alt="AZ Predictions" />
       </div>
 
       <div className="header-right">

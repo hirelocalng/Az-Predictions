@@ -2198,6 +2198,12 @@ def nba_fixtures():
                 _save_basketball_prediction(
                     {**g, 'competition': comp}, pred, 'nba'
                 )
+            # Mark first 2 games per date as free_tier
+            _dc: dict = {}
+            for _g in result:
+                _d = _g.get('game_date', '')
+                _dc[_d] = _dc.get(_d, 0) + 1
+                _g['free_tier'] = _dc[_d] <= 2
             _NBA_CACHE["data"] = result
             _NBA_CACHE["ts"]   = now_ts
         except Exception as exc:
@@ -2239,6 +2245,12 @@ def wnba_fixtures():
                 _save_basketball_prediction(
                     {**g, 'competition': 'WNBA'}, pred, 'wnba'
                 )
+            # Mark first 2 games per date as free_tier
+            _dc: dict = {}
+            for _g in result:
+                _d = _g.get('game_date', '')
+                _dc[_d] = _dc.get(_d, 0) + 1
+                _g['free_tier'] = _dc[_d] <= 2
             _WNBA_CACHE["data"] = result
             _WNBA_CACHE["ts"]   = now_ts
         except Exception as exc:

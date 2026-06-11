@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from '../contexts/AuthContext.jsx'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -28,10 +29,8 @@ function groupByDate(games) {
 /** Convert UTC "HH:MM" or "HH:MM:SS" time + date string to user's local time string. */
 function localKickoff(dateStr, timeStr) {
   if (!timeStr || typeof timeStr !== 'string') return null
-  // Match HH:MM optionally followed by :SS — no end anchor so HH:MM:SS works too
   const m = timeStr.match(/^(\d{1,2}):(\d{2})/)
   if (!m) return null
-  // "00:00" is TheSportsDB's placeholder for "time unknown"
   if (m[1] === '0' && m[2] === '00') return null
   if (m[1] === '00' && m[2] === '00') return null
   try {
@@ -63,6 +62,38 @@ function WinBar({ homeTeam, awayTeam, homePct, awayPct }) {
           <span className="bball-bar-team">{awayTeam.split(' ').pop()}</span>
           <span className="bball-bar-pct">{awayW}%</span>
         </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Locked card (premium gate) ────────────────────────────────────────────────
+
+function LockedCard({ game, onUpgrade }) {
+  return (
+    <div className="bball-card bball-locked">
+      <div className="bball-locked-blur">
+        <div className="bball-teams">
+          <div className="bball-team home">
+            <span className="bball-team-name">{game.home_team}</span>
+          </div>
+          <div className="bball-vs">vs</div>
+          <div className="bball-team away">
+            <span className="bball-team-name">{game.away_team}</span>
+          </div>
+        </div>
+        <div className="bball-bar-wrap">
+          <div className="bball-bar">
+            <div className="bball-bar-home" style={{ width: '55%' }} />
+            <div className="bball-bar-away" style={{ width: '45%' }} />
+          </div>
+        </div>
+      </div>
+      <div className="bball-locked-overlay">
+        <div className="bball-locked-icon">👑</div>
+        <div className="bball-locked-title">Premium Pick</div>
+        <div className="bball-locked-sub">Unlock full predictions for all games</div>
+        <button className="bball-locked-btn" onClick={onUpgrade}>GO PREMIUM</button>
       </div>
     </div>
   )
@@ -177,7 +208,7 @@ function Empty({ sport }) {
   )
 }
 
-function SportSection({ id, title, games, err }) {
+function SportSection({ id, title, games, err, isPremium, onUpgrade }) {
   const loading = games === null && !err
   return (
     <div className="bball-sport-section" id={id}>
@@ -205,7 +236,11 @@ function SportSection({ id, title, games, err }) {
             <div key={date} className="bball-day-section">
               <div className="bball-day-header">{dateLabel(date)}</div>
               <div className="bball-grid">
-                {dayGames.map((g, i) => <GameCard key={g.id || i} game={g} />)}
+                {dayGames.map((g, i) =>
+                  !g.free_tier && !isPremium
+                    ? <LockedCard key={g.id || i} game={g} onUpgrade={onUpgrade} />
+                    : <GameCard   key={g.id || i} game={g} />
+                )}
               </div>
             </div>
           ))}
@@ -218,6 +253,7 @@ function SportSection({ id, title, games, err }) {
 // ── Main section ──────────────────────────────────────────────────────────────
 
 export default function BasketballSection() {
+  const { isPremium, navigate } = useAuth()
   const [nbaGames,  setNbaGames]  = useState(null)
   const [wnbaGames, setWnbaGames] = useState(null)
   const [nbaErr,    setNbaErr]    = useState(null)
@@ -243,6 +279,7 @@ export default function BasketballSection() {
   }, [])
 
   const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
+  const goUpgrade = () => navigate('/subscribe')
 
   return (
     <section className="section" id="basketball">
@@ -251,6 +288,11 @@ export default function BasketballSection() {
         <h2 className="section-title">
           NBA &amp; <span className="green">WNBA</span>
         </h2>
+        {!isPremium && (
+          <p className="bball-free-note">
+            Free: 2 picks/day · <button className="bball-free-upgrade" onClick={goUpgrade}>Go Premium</button> for all picks
+          </p>
+        )}
       </div>
 
       {/* Quick-jump buttons */}
@@ -263,11 +305,13 @@ export default function BasketballSection() {
         </button>
       </div>
 
-      <SportSection id="nba-section"  title="NBA"  games={nbaGames}  err={nbaErr} />
+      <SportSection id="nba-section"  title="NBA"  games={nbaGames}  err={nbaErr}
+                    isPremium={isPremium} onUpgrade={goUpgrade} />
 
       <div className="bball-sport-divider" />
 
-      <SportSection id="wnba-section" title="WNBA" games={wnbaGames} err={wnbaErr} />
+      <SportSection id="wnba-section" title="WNBA" games={wnbaGames} err={wnbaErr}
+                    isPremium={isPremium} onUpgrade={goUpgrade} />
 
       <p className="footer-text">
         NBA via TheSportsDB · WNBA via ESPN · predictions updated every 10 minutes

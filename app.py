@@ -253,6 +253,35 @@ def _save_prediction(tip):
             _write_raw_history(data)
 
 
+def _compute_best_bet(tip):
+    """Return best_bet dict whose label+confidence is the highest-probability market."""
+    result = tip.get('result') or {}
+    ph  = float(result.get('home', 0) or 0)
+    pd_ = float(result.get('draw', 0) or 0)
+    pa  = float(result.get('away', 0) or 0)
+    pg  = float(tip.get('over_goals', 0.5) or 0.5)
+    bt  = float(tip.get('btts', 0.48) or 0.48)
+    co  = float(tip.get('over_corners', 0.52) or 0.52)
+    home = tip.get('home_team') or tip.get('home') or ''
+    away = tip.get('away_team') or tip.get('away') or ''
+
+    candidates = []
+    if ph:  candidates.append((ph,  f"{home} to Win"))
+    if pd_: candidates.append((pd_, 'Draw'))
+    if pa:  candidates.append((pa,  f"{away} to Win"))
+    goals_pct = pg if pg >= 0.5 else (1.0 - pg)
+    candidates.append((goals_pct, 'Over 2.5 Goals' if pg >= 0.5 else 'Under 2.5 Goals'))
+    btts_pct = bt if bt >= 0.5 else (1.0 - bt)
+    candidates.append((btts_pct, 'BTTS Yes' if bt >= 0.5 else 'BTTS No'))
+    cor_pct = co if co >= 0.5 else (1.0 - co)
+    candidates.append((cor_pct, 'Over 9.5 Corners' if co >= 0.5 else 'Under 9.5 Corners'))
+
+    if not candidates:
+        return tip.get('best_bet') or {}
+    best_prob, best_label = max(candidates, key=lambda x: x[0])
+    return {'label': best_label, 'confidence': round(best_prob, 4)}
+
+
 def _save_basketball_prediction(game, pred, sport):
     """Save an NBA or WNBA prediction to history."""
     home  = (game.get('home_team') or '').strip()
@@ -1775,13 +1804,6 @@ def _build_wc_fixtures():
 
         ph, pd_, pa = pred['home_win'], pred['draw'], pred['away_win']
         pg  = pred['over_goals']
-        best_prob = max(ph, pd_, pa)
-        if best_prob == ph:
-            bet = {'label': f"{raw['home']} to Win", 'confidence': ph}
-        elif best_prob == pa:
-            bet = {'label': f"{raw['away']} to Win", 'confidence': pa}
-        else:
-            bet = {'label': 'Draw', 'confidence': pd_}
 
         entry = {
             **raw,
@@ -1790,9 +1812,9 @@ def _build_wc_fixtures():
             'over_goals':   pg,
             'btts':         pred.get('btts',         0.48),
             'over_corners': pred.get('over_corners', 0.52),
-            'best_bet':     bet,
             'competition':  'FIFA World Cup 2026',
         }
+        entry['best_bet'] = _compute_best_bet(entry)
         _save_prediction(entry)
         fixtures.append(entry)
     return fixtures
@@ -1830,6 +1852,7 @@ def club_tips():
         try:
             tips = get_club_tips(_club_predict)
             for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
                 _save_prediction(t)
             _CLUB_TIPS_CACHE["data"] = tips
             _CLUB_TIPS_CACHE["ts"]   = now_ts
@@ -1939,6 +1962,7 @@ def intl_fixtures():
         try:
             tips = get_intl_tips(_wc_predict)
             for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
                 _save_prediction(t)
             _INTL_TIPS_CACHE["data"] = tips
             _INTL_TIPS_CACHE["ts"]   = now
@@ -1960,6 +1984,7 @@ def daily_tips():
         try:
             tips = get_daily_tips(_club_predict, _wc_predict)
             for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
                 _save_prediction(t)
             _DAILY_TIPS_CACHE["data"] = tips
             _DAILY_TIPS_CACHE["ts"]   = now
@@ -2001,7 +2026,7 @@ def daily_tips():
             'over_goals':       f.get('over_goals', 0.5),
             'btts':             f.get('btts', 0.48),
             'over_corners':     f.get('over_corners', 0.52),
-            'best_bet':         f.get('best_bet', {}),
+            'best_bet':         f.get('best_bet') or _compute_best_bet(f),
         })
     return jsonify(active)
 
@@ -2017,7 +2042,9 @@ def best_bet_of_day():
     if _CLUB_TIPS_CACHE["data"] is None or (now_ts - _CLUB_TIPS_CACHE["ts"]) > _CACHE_TTL:
         try:
             tips = get_club_tips(_club_predict)
-            for t in tips: _save_prediction(t)
+            for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
+                _save_prediction(t)
             _CLUB_TIPS_CACHE["data"] = tips
             _CLUB_TIPS_CACHE["ts"]   = now_ts
         except Exception as exc:
@@ -2028,7 +2055,9 @@ def best_bet_of_day():
     if _INTL_TIPS_CACHE["data"] is None or (now_ts - _INTL_TIPS_CACHE["ts"]) > _CACHE_TTL:
         try:
             tips = get_intl_tips(_wc_predict)
-            for t in tips: _save_prediction(t)
+            for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
+                _save_prediction(t)
             _INTL_TIPS_CACHE["data"] = tips
             _INTL_TIPS_CACHE["ts"]   = now_ts
         except Exception as exc:

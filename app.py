@@ -1181,6 +1181,9 @@ def _check_basketball_results():
                               home, hs, as_, away, status)
                     resolved += 1
                 _log.info('Basketball results check done: %d resolved', resolved)
+                if resolved > 0:
+                    _BEST_BET_CACHE["data"] = None
+                    _DAILY_TIPS_CACHE["ts"] = 0
     except Exception as e:
         _log.warning('Basketball results check failed: %s', e)
 
@@ -1408,12 +1411,39 @@ def _update_live_scores():
             if conn is not None:
                 cur.execute("""
                     SELECT match_id, home_team, away_team, match_date,
-                           predicted_winner, kickoff_utc, result_status
+                           predicted_winner, kickoff_utc, result_status, sport
                     FROM predictions
                     WHERE result_status IN ('PENDING', 'LIVE')
                 """)
                 rows = cur.fetchall()
-                for mid, home, away, match_date, pw, kickoff_str, curr_status in rows:
+                for mid, home, away, match_date, pw, kickoff_str, curr_status, sport in rows:
+                    # ── Basketball: use dedicated result fetchers (not soccer ESPN) ──
+                    if sport in ('nba', 'wnba'):
+                        try:
+                            kickoff = (datetime.fromisoformat(kickoff_str.replace('Z', '+00:00'))
+                                       if kickoff_str
+                                       else datetime.fromisoformat(f'{match_date}T23:00:00+00:00'))
+                        except Exception:
+                            continue
+                        if kickoff + timedelta(hours=3) > now:
+                            continue
+                        res = (_get_nba_game_result(home, away, str(match_date))
+                               if sport == 'nba'
+                               else _get_wnba_game_result(home, away, str(match_date)))
+                        if res:
+                            hs, as_ = res
+                            status = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                            cur.execute("""
+                                UPDATE predictions
+                                SET actual_home_score=%s, actual_away_score=%s,
+                                    result_status=%s, match_status='FINISHED'
+                                WHERE match_id=%s
+                            """, (hs, as_, status, mid))
+                            _log.info('Basketball result (2-min check): %s %d-%d %s -> %s',
+                                      home, hs, as_, away, status)
+                        continue  # skip soccer ESPN check for basketball
+
+                    # ── Football: check ESPN soccer events ────────────────────────
                     ev = _espn_match(espn, home or '', away or '')
                     if ev:
                         hs, as_ = ev['home_score'], ev['away_score']
@@ -2079,6 +2109,21 @@ def best_bet_of_day():
             candidates.append({'match_id': bmid, 'match': blbl, 'league': bcomp,
                                 'pick': bou_pick, 'prob': round(max(bou,1-bou),4),
                                 'type': 'goals', 'utc_kickoff': bkoff})
+
+    # Only include candidates whose game hasn't started yet
+    now_utc = datetime.now(timezone.utc)
+
+    def _kickoff_upcoming(c):
+        koff = c.get('utc_kickoff', '')
+        if not koff:
+            return True
+        try:
+            ko = datetime.fromisoformat(koff.replace('Z', '+00:00'))
+            return ko > now_utc
+        except Exception:
+            return True
+
+    candidates = [c for c in candidates if _kickoff_upcoming(c)]
 
     if not candidates:
         payload = {'best_bet': None, 'accumulator': [], 'combined_prob': 0.0}

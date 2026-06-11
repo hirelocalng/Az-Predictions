@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import PremiumGate from './PremiumGate.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 
@@ -12,16 +12,31 @@ export default function BestBetSection() {
   const isPremium  = Boolean(auth?.user?.is_premium)
   const [data,     setData]    = useState(null)
   const [loading,  setLoading] = useState(true)
+  const retryRef   = useRef(null)
 
-  useEffect(() => {
+  const fetchBestBet = () =>
     fetch('/api/best-bet')
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
+
+  // Initial fetch + poll every 3 minutes
+  useEffect(() => {
+    fetchBestBet()
+    const t = setInterval(fetchBestBet, 3 * 60 * 1000)
+    return () => { clearInterval(t); clearTimeout(retryRef.current) }
   }, [])
 
   const bestBet  = data?.best_bet
   const bestDone = bestBet && isFinished(bestBet.utc_kickoff)
+
+  // If the cached pick just finished, refetch after 10 s so backend serves the next one
+  useEffect(() => {
+    if (bestDone) {
+      clearTimeout(retryRef.current)
+      retryRef.current = setTimeout(fetchBestBet, 10_000)
+    }
+  }, [bestDone])
 
   // Filter accumulator picks whose match hasn't finished yet
   const acca = (data?.accumulator || []).filter(p => !isFinished(p.utc_kickoff))
@@ -39,11 +54,17 @@ export default function BestBetSection() {
         <div className="skeleton" style={{ height: 180, borderRadius: 20, maxWidth: 700, margin: '0 auto' }} />
       )}
 
-      {!loading && (!bestBet || bestDone) && (
+      {/* bestDone: cached pick is finished but next one is loading */}
+      {!loading && bestDone && (
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
-          {bestDone
-            ? "Today's best pick has finished. Come back tomorrow for new picks."
-            : 'No fixtures analysed yet — check back soon.'}
+          Finding the next best pick…
+        </p>
+      )}
+
+      {/* No picks at all */}
+      {!loading && !bestBet && (
+        <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
+          No upcoming fixtures to analyse yet — check back soon.
         </p>
       )}
 

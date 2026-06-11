@@ -182,7 +182,7 @@ function Empty({ sport }) {
   return (
     <div className="bball-empty">
       <div className="bball-empty-icon">🏀</div>
-      <p>No {sport === 'nba' ? 'NBA' : 'WNBA'} games in the next 4 days — check back soon.</p>
+      <p>No {sport === 'nba' ? 'NBA' : 'WNBA'} games in the next 2 days — check back soon.</p>
     </div>
   )
 }

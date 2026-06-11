@@ -2218,7 +2218,9 @@ def nba_fixtures():
     if _NBA_CACHE["data"] is None or (now_ts - _NBA_CACHE["ts"]) > _CACHE_TTL:
         try:
             from nba_predict import get_nba_fixtures as _get_games, predict_nba as _predict
-            games   = _get_games()
+            from datetime import date as _date, timedelta as _td
+            _end = (_date.today() + _td(days=1)).strftime('%Y-%m-%d')
+            games   = _get_games(end_date=_end)
             result  = []
             for g in games:
                 pred = _predict(g['home_team'], g['away_team'])
@@ -2266,7 +2268,9 @@ def wnba_fixtures():
     if _WNBA_CACHE["data"] is None or (now_ts - _WNBA_CACHE["ts"]) > _CACHE_TTL:
         try:
             from nba_predict import get_wnba_fixtures as _get_games, predict_wnba as _predict
-            games   = _get_games()
+            from datetime import date as _date, timedelta as _td
+            _end = (_date.today() + _td(days=1)).strftime('%Y-%m-%d')
+            games   = _get_games(end_date=_end)
             result  = []
             for g in games:
                 pred = _predict(g['home_team'], g['away_team'])
@@ -2377,6 +2381,15 @@ def results_history():
         else:
             break
 
+    # Filter list: PENDING/LIVE always shown; resolved only if at least one market is WON
+    def _has_any_won(p):
+        if p['result_status'] in ('PENDING', 'LIVE'):
+            return True
+        sub = p.get('sub_results') or {}
+        return any(v == 'WON' for v in sub.values())
+
+    display = [p for p in finished if _has_any_won(p)]
+
     return jsonify({
         'stats': {
             'total':       len(resolved),
@@ -2386,7 +2399,7 @@ def results_history():
             'streak':      streak,
             'streak_type': streak_type,
         },
-        'predictions': finished,
+        'predictions': display,
     })
 
 

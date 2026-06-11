@@ -1150,6 +1150,9 @@ def _check_pending_results():
                               home, hs, as_, away, status, corners)
                     resolved += 1
                 _log.info('Results check done: %d resolved', resolved)
+                if resolved > 0:
+                    _DAILY_TIPS_CACHE["ts"] = 0
+                    _BEST_BET_CACHE["data"] = None
                 return
     except Exception as e:
         _log.warning('DB check_pending failed, falling back to JSON: %s', e)
@@ -1345,6 +1348,9 @@ def _update_live_scores():
     except Exception as e:
         _log.warning('DB live update failed: %s', e)
         _check_pending_results()
+    # Invalidate tips/best-bet caches so next request gets fresh picks
+    _DAILY_TIPS_CACHE["ts"] = 0
+    _BEST_BET_CACHE["data"] = None
 
 
 WC_FIXTURES_RAW = [
@@ -1794,11 +1800,43 @@ def daily_tips():
         except Exception as exc:
             app.logger.error("daily-tips fetch failed: %s", exc)
             return jsonify([])
+
+    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
     done = _completed_keys()
     active = [t for t in (_DAILY_TIPS_CACHE["data"] or [])
               if _match_key(t.get('home_team','') or t.get('home',''),
                             t.get('away_team','') or t.get('away',''),
                             (t.get('utc_kickoff','') or '')[:10]) not in done]
+
+    # Merge today's World Cup fixtures (not covered by football-data.org free tier)
+    seen_keys = {_match_key(
+        t.get('home_team','') or t.get('home',''),
+        t.get('away_team','') or t.get('away',''),
+        (t.get('utc_kickoff','') or '')[:10]
+    ) for t in active}
+    for f in _WC_FIXTURES:
+        if f.get('date','') != today_str:
+            continue
+        mk = _match_key(f['home'], f['away'], f['date'])
+        if mk in done or mk in seen_keys:
+            continue
+        seen_keys.add(mk)
+        active.append({
+            'id':               mk,
+            'league':           'FIFA World Cup 2026',
+            'home_team':        f['home'],
+            'away_team':        f['away'],
+            'home_crest':       f"https://flagcdn.com/w40/{f.get('home_code','')}.png",
+            'away_crest':       f"https://flagcdn.com/w40/{f.get('away_code','')}.png",
+            'is_international': True,
+            'time':             f.get('time',''),
+            'utc_kickoff':      f.get('utc_kickoff',''),
+            'result':           f['result'],
+            'over_goals':       f.get('over_goals', 0.5),
+            'btts':             f.get('btts', 0.48),
+            'over_corners':     f.get('over_corners', 0.52),
+            'best_bet':         f.get('best_bet', {}),
+        })
     return jsonify(active)
 
 
@@ -1888,6 +1926,41 @@ def best_bet_of_day():
         # Corners Over/Under 9.5
         candidates.append(_c('Corners Over 9.5' if oc >= 0.5 else 'Corners Under 9.5',
                               max(oc, 1 - oc), 'corners'))
+
+    # ── Add NBA / WNBA candidates to the pool ─────────────────────────────────
+    for sport_label, bball_games, default_ou in [
+        ('NBA',  _NBA_CACHE.get('data')  or [], 220.5),
+        ('WNBA', _WNBA_CACHE.get('data') or [], 170.5),
+    ]:
+        for g in bball_games:
+            if g.get('date','') != today_str:
+                continue
+            if g.get('status','').lower() in ('final', 'ft', 'finished'):
+                continue
+            bh = g.get('home_team','')
+            ba = g.get('away_team','')
+            if not bh or not ba:
+                continue
+            bmid  = _match_key(bh, ba, g['date'])
+            blbl  = f"{bh} vs {ba}"
+            bcomp = g.get('competition', sport_label)
+            btime = g.get('time','')
+            bkoff = (f"{g['date']}T{btime}:00Z"
+                     if btime and btime not in ('','00:00')
+                     else f"{g['date']}T23:59:59Z")
+            bres  = g.get('result', {})
+            bph, bpa = bres.get('home', 0.5), bres.get('away', 0.5)
+            if max(bph, bpa) > 0:
+                rlbl = f"{bh} Win" if bph >= bpa else f"{ba} Win"
+                candidates.append({'match_id': bmid, 'match': blbl, 'league': bcomp,
+                                    'pick': rlbl, 'prob': round(max(bph,bpa),4),
+                                    'type': 'result', 'utc_kickoff': bkoff})
+            bou = g.get('over_total', 0.5)
+            bline = g.get('ou_line', default_ou)
+            bou_pick = f"Over {bline}" if bou >= 0.5 else f"Under {bline}"
+            candidates.append({'match_id': bmid, 'match': blbl, 'league': bcomp,
+                                'pick': bou_pick, 'prob': round(max(bou,1-bou),4),
+                                'type': 'goals', 'utc_kickoff': bkoff})
 
     if not candidates:
         payload = {'best_bet': None, 'accumulator': [], 'combined_prob': 0.0}
@@ -2367,16 +2440,16 @@ try:
     _scheduler = _BgSched(daemon=True)
     _scheduler.add_job(_update_live_scores, 'interval', minutes=2,
                        id='live_checker', misfire_grace_time=60)
-    _scheduler.add_job(_check_pending_results, 'interval', hours=1,
-                       id='results_checker', misfire_grace_time=300)
-    _scheduler.add_job(_check_basketball_results, 'interval', hours=1,
-                       id='basketball_checker', misfire_grace_time=300)
+    _scheduler.add_job(_check_pending_results, 'interval', minutes=15,
+                       id='results_checker', misfire_grace_time=120)
+    _scheduler.add_job(_check_basketball_results, 'interval', minutes=15,
+                       id='basketball_checker', misfire_grace_time=120)
     _scheduler.add_job(_refresh_caches, 'interval', hours=6,
                        id='cache_refresh', misfire_grace_time=300)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
-    _log.info('APScheduler started — live/2 min, results/1 h, cache/6 h')
+    _log.info('APScheduler started — live/2 min, results/15 min, cache/6 h')
     try:
         _check_pending_results()
     except Exception as _cpr_err:

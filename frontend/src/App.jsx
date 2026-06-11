@@ -191,7 +191,7 @@ export default function App() {
         <div className="app">
           <Header auth={auth} onLogout={logout} navigate={navigate} />
 
-          <main style={{ paddingTop: 62 }}>
+          <main style={{ paddingTop: 64 }}>
             <Hero
               onBestBet={() => { setActive('best-bet');    scrollTo('best-bet')    }}
               onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}

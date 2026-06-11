@@ -80,27 +80,44 @@ body::after {
 /* ── Header ────────────────────────────────────────────────────────────────── */
 .header {
   position: fixed; top: 0; left: 0; right: 0; z-index: 200;
-  height: 62px;
-  background: rgba(13,17,23,0.97);
-  backdrop-filter: blur(16px) saturate(160%);
-  -webkit-backdrop-filter: blur(16px) saturate(160%);
-  border-bottom: 1px solid #2a2a3a;
+  height: 64px;
+  background: rgba(4, 6, 14, 0.97);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: 0 4px 32px rgba(0,0,0,0.65);
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 28px;
   gap: 16px;
+}
+
+/* Green→gold gradient line at the bottom — ties in both site accent colours */
+.header::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(0,208,132,0.55) 20%,
+    rgba(0,208,132,0.25) 45%,
+    rgba(240,165,0,0.35) 70%,
+    transparent 100%
+  );
 }
 
 .header-logo {
   display: flex; align-items: center;
   cursor: pointer; user-select: none; flex-shrink: 0;
-  background: transparent; border: none; box-shadow: none;
 }
 
 .header-logo img {
-  height: 44px; width: auto; display: block;
-  /* Invert black→white so logo is readable on dark header.
-     hue-rotate(180deg) restores the original gold hue after inversion. */
-  filter: invert(1) hue-rotate(180deg) brightness(1.15) drop-shadow(0 0 6px rgba(201,146,42,0.5));
+  height: 48px; width: auto; display: block;
+  /* invert(1) → black text becomes white (readable on dark header)
+     hue-rotate(180deg) → mathematically restores the gold hue
+     saturate/brightness → punchy, bold appearance
+     dual drop-shadow → warm gold glow + dark depth layer */
+  filter: invert(1) hue-rotate(180deg) brightness(1.25) saturate(1.4)
+          drop-shadow(0 0 10px rgba(240,165,0,0.6))
+          drop-shadow(0 1px 4px rgba(0,0,0,0.9));
 }
 
 .nav-btn {

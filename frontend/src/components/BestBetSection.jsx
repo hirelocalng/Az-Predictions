@@ -93,9 +93,6 @@ export default function BestBetSection() {
       <div className="section-header" style={{ marginTop: 64 }}>
         <div className="section-label" style={{ color: 'var(--amber)' }}>🎯 Daily Accumulator · Premium</div>
         <h2 className="section-title">Daily <span className="amber">Accumulator</span></h2>
-        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: 8 }}>
-          Top 3 picks from different matches — combined into one slip
-        </p>
       </div>
 
       {!isPremium

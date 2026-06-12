@@ -15,10 +15,10 @@ Run:
     python app.py
 """
 
-from flask import Flask, jsonify, send_from_directory, request
+from flask import Flask, jsonify, send_from_directory, request, g
 from flask_cors import CORS
 from contextlib import contextmanager
-import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading, secrets
+import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading, secrets, functools, re
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -169,7 +169,46 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS sport VARCHAR(20) DEFAULT 'football'",
             ]:
                 cur.execute(_col)
-        print('DB init: all tables ready (predictions, users, sessions) ✓', flush=True)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS analytics_logs (
+                    id               SERIAL PRIMARY KEY,
+                    timestamp        TIMESTAMPTZ DEFAULT NOW(),
+                    endpoint         VARCHAR(300),
+                    method           VARCHAR(10),
+                    ip_address       VARCHAR(45),
+                    country          VARCHAR(100),
+                    user_id          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    user_agent       TEXT,
+                    device_type      VARCHAR(10),
+                    response_time_ms INTEGER,
+                    status_code      INTEGER
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_analytics_ts ON analytics_logs(timestamp)"
+            )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS odds_tips (
+                    id              SERIAL PRIMARY KEY,
+                    created_at      TIMESTAMPTZ DEFAULT NOW(),
+                    date            DATE NOT NULL,
+                    time            VARCHAR(10),
+                    league          VARCHAR(200),
+                    team_home       VARCHAR(100) NOT NULL,
+                    team_away       VARCHAR(100) NOT NULL,
+                    score           VARCHAR(20),
+                    tip_description VARCHAR(300),
+                    odd_value       NUMERIC(6,2),
+                    tier            VARCHAR(10) NOT NULL DEFAULT 'free'
+                                        CHECK (tier IN ('free','vip')),
+                    status          VARCHAR(10) NOT NULL DEFAULT 'pending'
+                                        CHECK (status IN ('pending','won','lost'))
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_odds_tips_date ON odds_tips(date, tier)"
+            )
+        print('DB init: all tables ready (predictions, users, sessions, analytics_logs, odds_tips) ✓', flush=True)
         _log.info('DB: all tables ready')
     except Exception as e:
         print(f'DB init FAILED: {e}', flush=True)
@@ -406,6 +445,346 @@ def _get_current_user():
     except Exception as e:
         _log.warning('_get_current_user: %s', e)
         return None
+
+
+# ── Analytics middleware ───────────────────────────────────────────────────────
+
+_ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+_IP_GEO_CACHE: dict = {}
+_IP_GEO_LOCK = threading.Lock()
+
+
+def _get_country(ip: str) -> str:
+    if not ip or ip in ('127.0.0.1', '::1'):
+        return 'Local'
+    now = time.time()
+    with _IP_GEO_LOCK:
+        entry = _IP_GEO_CACHE.get(ip)
+        if entry and now - entry[1] < 3600:
+            return entry[0]
+    try:
+        import requests as _rq
+        r = _rq.get(f'http://ip-api.com/json/{ip}?fields=country', timeout=2)
+        country = r.json().get('country', 'Unknown') if r.status_code == 200 else 'Unknown'
+    except Exception:
+        country = 'Unknown'
+    with _IP_GEO_LOCK:
+        _IP_GEO_CACHE[ip] = (country, now)
+        if len(_IP_GEO_CACHE) > 4000:
+            oldest = sorted(_IP_GEO_CACHE, key=lambda k: _IP_GEO_CACHE[k][1])[:1000]
+            for k in oldest:
+                del _IP_GEO_CACHE[k]
+    return country
+
+
+def _detect_device(ua: str) -> str:
+    if re.search(r'mobile|android|iphone|ipad|ipod|tablet', (ua or '').lower()):
+        return 'mobile'
+    return 'desktop'
+
+
+def _do_log_analytics(endpoint, method, ip, ua, user_id, status_code, elapsed_ms):
+    if not _DB_CONN_URL:
+        return
+    try:
+        country     = _get_country(ip)
+        device_type = _detect_device(ua)
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            cur.execute(
+                """INSERT INTO analytics_logs
+                   (endpoint, method, ip_address, country, user_id,
+                    user_agent, device_type, response_time_ms, status_code)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (endpoint, method, ip, country, user_id,
+                 ua[:500], device_type, elapsed_ms, status_code),
+            )
+    except Exception as e:
+        _log.debug('analytics insert: %s', e)
+
+
+@app.before_request
+def _analytics_before():
+    g._req_start = time.time()
+    g._analytics_user_id = None
+    if request.headers.get('Authorization', '').startswith('Bearer '):
+        try:
+            u = _get_current_user()
+            if u:
+                g._analytics_user_id = u['id']
+        except Exception:
+            pass
+
+
+@app.after_request
+def _analytics_after(response):
+    try:
+        path = request.path
+        if path.startswith('/assets/') or path.startswith('/static/'):
+            return response
+        elapsed_ms = round((time.time() - getattr(g, '_req_start', time.time())) * 1000)
+        ip  = (request.headers.get('X-Forwarded-For', '') or request.remote_addr or '').split(',')[0].strip()
+        ua  = request.headers.get('User-Agent', '')
+        uid = getattr(g, '_analytics_user_id', None)
+        threading.Thread(
+            target=_do_log_analytics,
+            args=(path, request.method, ip, ua, uid, response.status_code, elapsed_ms),
+            daemon=True,
+        ).start()
+    except Exception as e:
+        _log.debug('after_request analytics: %s', e)
+    return response
+
+
+def _require_admin(f):
+    @functools.wraps(f)
+    def _wrapper(*args, **kwargs):
+        if not _ADMIN_PASSWORD:
+            return jsonify({'error': 'Admin not configured — set ADMIN_PASSWORD env var'}), 503
+        pw = request.headers.get('X-Admin-Password', '') or request.args.get('admin_pw', '')
+        if pw != _ADMIN_PASSWORD:
+            return jsonify({'error': 'Unauthorized'}), 403
+        return f(*args, **kwargs)
+    return _wrapper
+
+
+@app.route('/admin/analytics')
+@_require_admin
+def admin_analytics():
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'Database not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB connection failed'}), 503
+
+            now_u  = datetime.now(timezone.utc)
+            t_day  = now_u.replace(hour=0, minute=0, second=0, microsecond=0)
+            t_week = t_day - timedelta(days=t_day.weekday())
+            t_mon  = t_day.replace(day=1)
+
+            cur.execute("SELECT COUNT(*) FROM analytics_logs WHERE timestamp >= %s", (t_day,))
+            v_today = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM analytics_logs WHERE timestamp >= %s", (t_week,))
+            v_week = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM analytics_logs WHERE timestamp >= %s", (t_mon,))
+            v_month = cur.fetchone()[0]
+
+            cur.execute("""
+                SELECT endpoint, COUNT(*) v FROM analytics_logs
+                WHERE timestamp >= %s
+                GROUP BY endpoint ORDER BY v DESC LIMIT 10
+            """, (t_mon,))
+            top_pages = [{'endpoint': r[0], 'visits': r[1]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT
+                  COUNT(DISTINCT CASE WHEN u.is_premium IS TRUE  THEN al.user_id END) premium,
+                  COUNT(DISTINCT CASE WHEN u.is_premium IS FALSE THEN al.user_id END) free_u,
+                  COUNT(CASE WHEN al.user_id IS NULL THEN 1 END)                     anon
+                FROM analytics_logs al
+                LEFT JOIN users u ON al.user_id = u.id
+                WHERE al.timestamp >= %s
+            """, (t_mon,))
+            row = cur.fetchone()
+            user_breakdown = {'premium': row[0], 'free': row[1], 'anonymous': row[2]}
+
+            cur.execute("""
+                SELECT country, COUNT(*) v FROM analytics_logs
+                WHERE timestamp >= %s AND country NOT IN ('Unknown','Local')
+                GROUP BY country ORDER BY v DESC LIMIT 15
+            """, (t_mon,))
+            countries = [{'country': r[0], 'visits': r[1]} for r in cur.fetchall()]
+
+            cur.execute("""
+                SELECT EXTRACT(HOUR FROM timestamp AT TIME ZONE 'UTC')::int h, COUNT(*) v
+                FROM analytics_logs WHERE timestamp >= %s
+                GROUP BY h ORDER BY h
+            """, (t_mon,))
+            peak_hours = [{'hour': r[0], 'visits': r[1]} for r in cur.fetchall()]
+
+        return jsonify({
+            'visits':         {'today': v_today, 'week': v_week, 'month': v_month},
+            'top_pages':      top_pages,
+            'user_breakdown': user_breakdown,
+            'countries':      countries,
+            'peak_hours':     peak_hours,
+        })
+    except Exception as e:
+        _log.exception('admin_analytics: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Odds Tips — helpers ───────────────────────────────────────────────────────
+
+def _tip_to_dict(row):
+    return {
+        'id':              row[0],
+        'created_at':      row[1].isoformat() if row[1] else None,
+        'date':            str(row[2]) if row[2] else None,
+        'time':            row[3],
+        'league':          row[4],
+        'team_home':       row[5],
+        'team_away':       row[6],
+        'score':           row[7],
+        'tip_description': row[8],
+        'odd_value':       float(row[9]) if row[9] is not None else None,
+        'tier':            row[10],
+        'status':          row[11],
+    }
+
+_TIP_COLS = """id, created_at, date, time, league, team_home, team_away,
+               score, tip_description, odd_value, tier, status"""
+
+
+# ── Odds Tips — admin CRUD ────────────────────────────────────────────────────
+
+@app.route('/admin/odds-tips', methods=['POST'])
+@_require_admin
+def admin_create_tip():
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    b = request.get_json(silent=True) or {}
+    if not b.get('team_home') or not b.get('team_away') or not b.get('date'):
+        return jsonify({'error': 'date, team_home, team_away are required'}), 400
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+            cur.execute("""
+                INSERT INTO odds_tips
+                  (date, time, league, team_home, team_away, score,
+                   tip_description, odd_value, tier, status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
+            """, (
+                b.get('date'), b.get('time'), b.get('league'),
+                b['team_home'], b['team_away'], b.get('score'),
+                b.get('tip_description'),
+                float(b['odd_value']) if b.get('odd_value') else None,
+                b.get('tier', 'free'), b.get('status', 'pending'),
+            ))
+            tip_id = cur.fetchone()[0]
+        return jsonify({'id': tip_id}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/odds-tips/<int:tip_id>', methods=['PUT'])
+@_require_admin
+def admin_update_tip(tip_id):
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    b = request.get_json(silent=True) or {}
+    allowed = ('date','time','league','team_home','team_away','score',
+               'tip_description','odd_value','tier','status')
+    sets, vals = [], []
+    for field in allowed:
+        if field in b:
+            sets.append(f'{field} = %s')
+            v = b[field]
+            if field == 'odd_value' and v is not None:
+                v = float(v)
+            vals.append(v)
+    if not sets:
+        return jsonify({'error': 'Nothing to update'}), 400
+    vals.append(tip_id)
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+            cur.execute(f"UPDATE odds_tips SET {', '.join(sets)} WHERE id = %s", vals)
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Tip not found'}), 404
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/odds-tips', methods=['GET'])
+@_require_admin
+def admin_list_tips():
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+            cur.execute(f"""
+                SELECT {_TIP_COLS} FROM odds_tips
+                ORDER BY date DESC, time DESC NULLS LAST LIMIT 200
+            """)
+            tips = [_tip_to_dict(r) for r in cur.fetchall()]
+        return jsonify({'tips': tips})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/odds-tips/<int:tip_id>', methods=['DELETE'])
+@_require_admin
+def admin_delete_tip(tip_id):
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+            cur.execute('DELETE FROM odds_tips WHERE id = %s', (tip_id,))
+            if cur.rowcount == 0:
+                return jsonify({'error': 'Tip not found'}), 404
+        return jsonify({'ok': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ── Odds Tips — public ────────────────────────────────────────────────────────
+
+@app.route('/api/odds-tips/free')
+def odds_tips_free():
+    if not _DB_CONN_URL:
+        return jsonify({'tips': []})
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'tips': []})
+            cur.execute(f"""
+                SELECT {_TIP_COLS} FROM odds_tips
+                WHERE tier = 'free' AND date = %s
+                ORDER BY time ASC NULLS LAST, id ASC
+            """, (today,))
+            tips = [_tip_to_dict(r) for r in cur.fetchall()]
+        return jsonify({'tips': tips, 'date': today})
+    except Exception as e:
+        _log.warning('odds_tips_free: %s', e)
+        return jsonify({'tips': [], 'error': str(e)})
+
+
+@app.route('/api/odds-tips/vip')
+def odds_tips_vip():
+    user  = _get_current_user()
+    today = datetime.now(timezone.utc).date().isoformat()
+    locked = not (user and user['is_premium'])
+    if locked:
+        return jsonify({'tips': [], 'locked': True,
+                        'message': 'VIP tips require a premium subscription'})
+    if not _DB_CONN_URL:
+        return jsonify({'tips': [], 'locked': False})
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'tips': [], 'locked': False})
+            cur.execute(f"""
+                SELECT {_TIP_COLS} FROM odds_tips
+                WHERE tier = 'vip' AND date = %s
+                ORDER BY time ASC NULLS LAST, id ASC
+            """, (today,))
+            tips = [_tip_to_dict(r) for r in cur.fetchall()]
+        return jsonify({'tips': tips, 'locked': False, 'date': today})
+    except Exception as e:
+        _log.warning('odds_tips_vip: %s', e)
+        return jsonify({'tips': [], 'locked': False, 'error': str(e)})
 
 
 def _migrate_json_to_db():
@@ -2682,6 +3061,7 @@ def index():
 @app.route('/subscribe')
 @app.route('/login')
 @app.route('/register')
+@app.route('/admin')
 def spa_pages():
     return _serve_index()
 

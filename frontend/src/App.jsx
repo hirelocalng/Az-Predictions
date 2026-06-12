@@ -6,6 +6,8 @@ import BestBetSection from './components/BestBetSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
 import ResultsSection from './components/ResultsSection.jsx'
 import BasketballSection from './components/BasketballSection.jsx'
+import OddsTipsSection from './components/OddsTipsSection.jsx'
+import AdminPage from './components/AdminPage.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import RegisterPage from './components/RegisterPage.jsx'
 import SubscribePage from './components/SubscribePage.jsx'
@@ -18,6 +20,7 @@ const pathToPage = p => {
   if (p === '/login')     return 'login'
   if (p === '/register')  return 'register'
   if (p === '/subscribe') return 'subscribe'
+  if (p === '/admin')     return 'admin'
   return 'home'
 }
 
@@ -80,7 +83,7 @@ function Header({ auth, onLogout, navigate }) {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, navigate }) {
+function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, onOdds, navigate }) {
   return (
     <section className="hero">
       <div className="hero-eyebrow">AI-Powered Match Predictions</div>
@@ -92,6 +95,10 @@ function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, nav
       <div className="hero-actions">
         <button className="btn-primary hero-bb-btn" onClick={onBestBet}>⭐ Best Bet Today</button>
         <button className="btn-outline" onClick={onDailyTips}>Today's Tips</button>
+        <button className="btn-outline" onClick={onOdds}
+                style={{ borderColor: 'rgba(0,208,132,0.4)', color: 'var(--green)' }}>
+          🎯 Daily Odds
+        </button>
         <button className="btn-outline" onClick={onWC}>World Cup 2026</button>
         <button className="btn-outline" onClick={onIntl}>Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
@@ -187,6 +194,8 @@ export default function App() {
     return <RegisterPage navigate={navigate} onAuth={saveAuth} />
   if (page === 'subscribe')
     return <SubscribePage navigate={navigate} auth={auth} onAuth={saveAuth} />
+  if (page === 'admin')
+    return <AdminPage navigate={navigate} />
 
   // Main app
   return (
@@ -199,6 +208,7 @@ export default function App() {
             <Hero
               onBestBet={() => { setActive('best-bet');    scrollTo('best-bet')    }}
               onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
+              onOdds={()      => { setActive('odds-tips'); scrollTo('odds-tips')   }}
               onWC={()        => { setActive('worldcup');   scrollTo('worldcup')   }}
               onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
               onClub={()      => { setActive('club');       scrollTo('club')       }}
@@ -207,6 +217,8 @@ export default function App() {
               navigate={navigate}
             />
             <BestBetSection />
+            <div className="divider" />
+            <OddsTipsSection />
             <div className="divider" />
             <DailyTipsSection />
             <div className="divider" />

@@ -1399,3 +1399,175 @@ body::after {
   .bball-tabs        { gap: 6px; margin-bottom: 14px; }
   .bball-tab         { padding: 8px 18px; font-size: 0.82rem; }
 }
+
+/* ── Odds Tips section ──────────────────────────────────────────────────────── */
+.odds-section { padding-bottom: 64px; }
+
+.odds-accum {
+  display: flex; flex-direction: column; align-items: flex-end;
+  background: var(--green-dim); border: 1px solid var(--green-border);
+  border-radius: var(--r); padding: 12px 20px; gap: 2px;
+}
+.odds-accum-label { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--green); }
+.odds-accum-val   { font-size: 1.5rem; font-weight: 900; color: var(--green); }
+
+.odds-tier-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.odds-tier-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  border-radius: 99px; padding: 5px 14px;
+}
+.odds-tier-free { background: rgba(0,208,132,.1); border: 1px solid var(--green-border); color: var(--green); }
+.odds-tier-vip  { background: rgba(240,165,0,.08); border: 1px solid var(--amber-border); color: var(--amber); }
+
+.odds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-bottom: 8px;
+}
+
+.odds-tip-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--r); padding: 18px 16px;
+  display: flex; flex-direction: column; gap: 12px;
+  transition: border-color var(--transition), transform var(--transition);
+}
+.odds-tip-card:hover { transform: translateY(-2px); border-color: var(--border-med); }
+.odds-tip-won  { border-color: rgba(0,208,132,.25); background: rgba(0,208,132,.03); }
+.odds-tip-lost { border-color: rgba(255,77,109,.22); background: rgba(255,77,109,.03); }
+
+.odds-tip-header {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.odds-tip-time {
+  font-size: 0.72rem; font-weight: 700; color: var(--amber); letter-spacing: 0.05em;
+  background: var(--amber-dim); border-radius: 4px; padding: 2px 7px;
+}
+.odds-tip-league {
+  font-size: 0.7rem; color: var(--text-muted); flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.odds-badge {
+  font-size: 0.65rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  border-radius: 99px; padding: 3px 10px; flex-shrink: 0;
+}
+.odds-badge-won     { background: rgba(0,208,132,.15); color: var(--green); border: 1px solid rgba(0,208,132,.3); }
+.odds-badge-lost    { background: rgba(255,77,109,.12); color: var(--red);  border: 1px solid rgba(255,77,109,.3); }
+.odds-badge-pending { background: rgba(240,165,0,.10);  color: var(--amber); border: 1px solid var(--amber-border); }
+
+.odds-tip-teams {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.odds-tip-home, .odds-tip-away {
+  font-size: 0.92rem; font-weight: 700; color: var(--text); flex: 1;
+}
+.odds-tip-away { text-align: right; }
+.odds-tip-vs, .odds-tip-score {
+  font-size: 0.78rem; color: var(--text-muted); flex-shrink: 0; white-space: nowrap;
+}
+.odds-tip-score { color: var(--amber); font-weight: 700; }
+
+.odds-tip-footer {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+}
+.odds-tip-desc { font-size: 0.8rem; color: var(--text-2); flex: 1; }
+.odds-tip-odd  {
+  font-size: 1.05rem; font-weight: 800; color: var(--green);
+  background: var(--green-dim); border-radius: 6px; padding: 2px 10px; flex-shrink: 0;
+}
+
+.odds-divider {
+  height: 1px; background: var(--border); margin: 28px 0;
+}
+
+.odds-loading, .odds-empty {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 48px 24px; color: var(--text-muted); font-size: 0.88rem;
+  border: 1px dashed var(--border); border-radius: var(--r);
+  text-align: center;
+}
+
+/* VIP locked area */
+.odds-vip-locked { position: relative; }
+.odds-vip-blur-wrap {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  filter: blur(6px); pointer-events: none; user-select: none;
+  opacity: 0.5;
+}
+.odds-tip-blur { pointer-events: none; }
+.odds-vip-gate {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; text-align: center; padding: 24px;
+  background: rgba(5,5,8,.72); border-radius: var(--r-lg);
+  border: 1px dashed var(--amber-border);
+}
+
+/* ── Admin page ─────────────────────────────────────────────────────────────── */
+.admin-card {
+  background: var(--bg-card); border: 1px solid var(--border-med);
+  border-radius: var(--r-lg); padding: 28px 28px;
+}
+.admin-form {
+  display: flex; flex-direction: column; gap: 16px;
+}
+.admin-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px;
+}
+.admin-card .field input,
+.admin-card .field select {
+  background: rgba(255,255,255,.04); border: 1px solid var(--border-med);
+  border-radius: var(--r-sm); padding: 10px 14px; font-size: 0.85rem;
+  color: var(--text); font-family: var(--font); outline: none;
+  transition: all var(--transition); width: 100%;
+}
+.admin-card .field input:focus,
+.admin-card .field select:focus {
+  border-color: var(--green); box-shadow: 0 0 0 3px var(--green-glow);
+}
+.admin-card .field label {
+  font-size: 0.65rem; font-weight: 600; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--text-muted); margin-bottom: 5px;
+}
+.admin-card .field select option { background: #111; }
+
+.admin-tip-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 10px 14px; border-radius: var(--r-sm);
+  background: var(--bg-card-2); border: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.admin-tip-info {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; flex: 1;
+}
+.admin-tip-date  { font-size: 0.72rem; color: var(--amber); font-weight: 600; }
+.admin-tip-teams { font-size: 0.82rem; font-weight: 700; color: var(--text); }
+.admin-tip-desc  { font-size: 0.75rem; color: var(--text-muted); }
+.admin-tip-odd   { font-size: 0.8rem; font-weight: 700; color: var(--green); }
+
+.admin-tip-actions {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+}
+.admin-btn {
+  padding: 4px 12px; border-radius: 6px; font-size: 0.72rem; font-weight: 700;
+  cursor: pointer; border: 1px solid var(--border-med); background: transparent;
+  color: var(--text-2); transition: all 0.15s;
+}
+.admin-btn:hover            { border-color: var(--border-hi); color: var(--text); }
+.admin-btn-won              { border-color: var(--green-border); color: var(--green); }
+.admin-btn-won:hover        { background: var(--green-dim); }
+.admin-btn-lost             { border-color: rgba(255,77,109,.3); color: var(--red); }
+.admin-btn-lost:hover       { background: var(--red-dim); }
+
+@media (max-width: 600px) {
+  .odds-grid         { grid-template-columns: 1fr; }
+  .odds-vip-blur-wrap { grid-template-columns: 1fr; }
+  .odds-accum        { align-items: flex-start; }
+  .admin-card        { padding: 20px 16px; }
+  .admin-row         { grid-template-columns: 1fr; }
+  .admin-tip-row     { flex-direction: column; align-items: flex-start; }
+}

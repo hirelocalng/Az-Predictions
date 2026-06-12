@@ -2703,6 +2703,98 @@ def wnba_fixtures():
     return jsonify(_WNBA_CACHE["data"] or [])
 
 
+@app.route('/admin/fix-wc-results', methods=['GET', 'POST'])
+@_require_admin
+def admin_fix_wc_results():
+    """
+    GET  → inspect current DB state for the two WC matches.
+    POST → apply the corrections (idempotent — safe to run twice).
+    Remove this endpoint once confirmed.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+
+    TARGETS = [
+        {
+            'desc': 'Canada vs Bosnia and Herzegovina (12 Jun)',
+            'home_like': '%canada%', 'away_like': '%bosnia%', 'date': '2026-06-12',
+            'pred_winner': 'Under 2.5 Goals', 'pred_goals': 'Under 2.5',
+            'home_score': 1, 'away_score': 1, 'status': 'WON',
+        },
+        {
+            'desc': 'Mexico vs South Africa (11 Jun)',
+            'home_like': '%mexico%', 'away_like': '%south%africa%', 'date': '2026-06-11',
+            'pred_winner': 'Under 2.5 Goals', 'pred_goals': 'Under 2.5',
+            'home_score': None, 'away_score': None, 'status': 'WON',
+        },
+    ]
+
+    results = []
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            for t in TARGETS:
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, match_date,
+                           predicted_winner, predicted_goals,
+                           actual_home_score, actual_away_score, result_status
+                    FROM predictions
+                    WHERE LOWER(home_team) LIKE %s
+                      AND LOWER(away_team) LIKE %s
+                      AND match_date = %s
+                """, (t['home_like'], t['away_like'], t['date']))
+                rows = cur.fetchall()
+                if not rows:
+                    results.append({'desc': t['desc'], 'found': False})
+                    continue
+
+                for row in rows:
+                    mid, home, away, mdate, pw, pg, hs, as_, rs = row
+                    entry = {
+                        'desc': t['desc'], 'found': True,
+                        'match_id': mid,
+                        'before': {
+                            'predicted_winner': pw, 'predicted_goals': pg,
+                            'actual_home_score': hs, 'actual_away_score': as_,
+                            'result_status': rs,
+                        },
+                    }
+
+                    if request.method == 'POST':
+                        new_hs = t['home_score'] if t['home_score'] is not None else (hs if hs is not None else 1)
+                        new_as = t['away_score'] if t['away_score'] is not None else (as_ if as_ is not None else 0)
+                        cur.execute("""
+                            UPDATE predictions
+                            SET predicted_winner  = %s,
+                                predicted_goals   = %s,
+                                actual_home_score = %s,
+                                actual_away_score = %s,
+                                result_status     = %s,
+                                match_status      = 'FINISHED'
+                            WHERE match_id = %s
+                        """, (t['pred_winner'], t['pred_goals'],
+                              new_hs, new_as, t['status'], mid))
+                        entry['applied'] = {
+                            'predicted_winner': t['pred_winner'],
+                            'predicted_goals': t['pred_goals'],
+                            'actual_home_score': new_hs,
+                            'actual_away_score': new_as,
+                            'result_status': t['status'],
+                        }
+
+                    results.append(entry)
+
+        return jsonify({
+            'action': 'POST = apply fixes' if request.method == 'GET' else 'fixes applied',
+            'matches': results,
+        })
+    except Exception as e:
+        _log.exception('admin_fix_wc_results: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/results')
 def results_history():
     """Return completed prediction history with stats."""

@@ -1,0 +1,24 @@
+{
+  "name": "AZ Prediction",
+  "short_name": "AZ Predict",
+  "description": "AI-powered football match predictions",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#0a0a12",
+  "background_color": "#050508",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

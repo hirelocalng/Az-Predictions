@@ -695,6 +695,53 @@ body::after {
 .res-skeleton { display: flex; flex-direction: column; gap: 10px; }
 .res-row-skel { height: 68px; border-radius: var(--r); }
 
+/* ── PWA install button ────────────────────────────────────────────────────── */
+.install-float {
+  position: fixed; bottom: 90px; right: 24px; z-index: 299;
+  display: flex; align-items: center;
+  animation: fadeUp 0.35s ease;
+  filter: drop-shadow(0 4px 20px rgba(0,208,132,.25));
+}
+.install-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: var(--bg-card-2); border: 1px solid var(--green-border);
+  border-right: none; color: var(--green);
+  border-radius: 28px 0 0 28px; padding: 10px 16px;
+  font-size: 0.76rem; font-weight: 700; letter-spacing: 0.02em;
+  font-family: var(--font); cursor: pointer;
+  transition: all var(--transition);
+}
+.install-btn:hover { background: var(--green-dim); }
+.install-dismiss {
+  background: var(--bg-card-2); border: 1px solid var(--green-border);
+  color: var(--text-muted); border-radius: 0 28px 28px 0;
+  padding: 10px 13px; font-size: 1rem; line-height: 1;
+  cursor: pointer; font-family: var(--font);
+  transition: color var(--transition);
+}
+.install-dismiss:hover { color: var(--text); }
+
+/* ── iOS add-to-home-screen banner ─────────────────────────────────────────── */
+.ios-banner {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 400;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  background: var(--bg-card-2); border-top: 1px solid var(--green-border);
+  padding: 14px 20px; font-size: 0.8rem; color: var(--text-2);
+  box-shadow: 0 -4px 24px rgba(0,208,132,.08);
+  animation: fadeIn 0.3s ease;
+}
+.ios-banner strong { color: var(--green); }
+.ios-banner-close {
+  background: none; border: none; color: var(--text-muted);
+  font-size: 1.3rem; line-height: 1; cursor: pointer; padding: 0; flex-shrink: 0;
+  transition: color var(--transition);
+}
+.ios-banner-close:hover { color: var(--text); }
+
+@media (max-width: 600px) {
+  .install-float { bottom: 86px; right: 18px; }
+}
+
 /* ── Telegram ──────────────────────────────────────────────────────────────── */
 .tg-float {
   position: fixed; bottom: 24px; right: 24px; z-index: 300;

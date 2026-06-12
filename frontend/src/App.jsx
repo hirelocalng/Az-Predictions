@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
@@ -26,6 +26,65 @@ const pathToPage = p => {
 
 const getStoredAuth = () => {
   try { return JSON.parse(localStorage.getItem('az_auth') || 'null') } catch { return null }
+}
+
+// ── PWA install prompt ────────────────────────────────────────────────────────
+
+function useInstallPrompt() {
+  const promptRef = useRef(null)
+  const [ready, setReady] = useState(false)
+
+  useEffect(() => {
+    // Already installed or permanently dismissed
+    if (window.matchMedia('(display-mode: standalone)').matches) return
+    if (localStorage.getItem('pwa_dismissed')) return
+
+    const handler = e => { e.preventDefault(); promptRef.current = e; setReady(true) }
+    window.addEventListener('beforeinstallprompt', handler)
+    return () => window.removeEventListener('beforeinstallprompt', handler)
+  }, [])
+
+  const install = async () => {
+    if (!promptRef.current) return
+    promptRef.current.prompt()
+    const { outcome } = await promptRef.current.userChoice
+    if (outcome === 'dismissed') localStorage.setItem('pwa_dismissed', '1')
+    promptRef.current = null
+    setReady(false)
+  }
+
+  const dismiss = () => { localStorage.setItem('pwa_dismissed', '1'); setReady(false) }
+
+  return { ready, install, dismiss }
+}
+
+function InstallButton() {
+  const { ready, install, dismiss } = useInstallPrompt()
+  if (!ready) return null
+  return (
+    <div className="install-float">
+      <button className="install-btn" onClick={install}>⬇ Install App</button>
+      <button className="install-dismiss" onClick={dismiss} aria-label="Dismiss">×</button>
+    </div>
+  )
+}
+
+function IOSBanner() {
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent)
+    const standalone = window.navigator.standalone
+    const dismissed  = localStorage.getItem('ios_banner_dismissed')
+    if (ios && !standalone && !dismissed) setVisible(true)
+  }, [])
+  if (!visible) return null
+  const dismiss = () => { localStorage.setItem('ios_banner_dismissed', '1'); setVisible(false) }
+  return (
+    <div className="ios-banner">
+      <span>📲 Tap <strong>Share</strong> then <strong>Add to Home Screen</strong> to install</span>
+      <button className="ios-banner-close" onClick={dismiss} aria-label="Close">×</button>
+    </div>
+  )
 }
 
 // ── Telegram ─────────────────────────────────────────────────────────────────
@@ -249,6 +308,8 @@ export default function App() {
             </div>
           </footer>
           <TelegramFloat />
+          <InstallButton />
+          <IOSBanner />
         </div>
       </LiveScoresContext.Provider>
     </AuthContext.Provider>

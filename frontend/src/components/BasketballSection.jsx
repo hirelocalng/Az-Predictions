@@ -178,11 +178,11 @@ function BballSkeleton() {
   )
 }
 
-function Empty({ sport }) {
+function Empty({ title }) {
   return (
     <div className="bball-empty">
       <div className="bball-empty-icon">🏀</div>
-      <p>No {sport === 'nba' ? 'NBA' : 'WNBA'} games in the next 2 days — check back soon.</p>
+      <p>No {title} games in the next 2 days — check back soon.</p>
     </div>
   )
 }
@@ -221,7 +221,7 @@ function SportSection({ id, title, games, err, isPremium, onUpgrade }) {
       )}
 
       {!loading && !err && visibleGames.length === 0 && lockedCount === 0 && (
-        <Empty sport={id} />
+        <Empty title={title} />
       )}
 
       {!loading && !err && visibleGames.length > 0 && (

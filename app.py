@@ -2725,7 +2725,7 @@ def admin_fix_wc_results():
             'desc': 'Mexico vs South Africa (11 Jun)',
             'home_like': '%mexico%', 'away_like': '%south%africa%', 'date': '2026-06-11',
             'pred_winner': 'Under 2.5 Goals', 'pred_goals': 'Under 2.5',
-            'home_score': None, 'away_score': None, 'status': 'WON',
+            'home_score': 2, 'away_score': 0, 'status': 'WON',
         },
     ]
 

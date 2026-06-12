@@ -31,8 +31,8 @@ FIXES = [
         'home_like':  '%mexico%',
         'away_like':  '%south africa%',
         'date':       '2026-06-11',
-        'home_score': None,   # preserve existing if already set
-        'away_score': None,
+        'home_score': 2,
+        'away_score': 0,
         'pred_winner': 'Under 2.5 Goals',
         'pred_goals':  'Under 2.5',
         'status':      'WON',

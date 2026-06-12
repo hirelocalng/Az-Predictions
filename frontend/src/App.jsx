@@ -35,13 +35,25 @@ function useInstallPrompt() {
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    // Already installed or permanently dismissed
     if (window.matchMedia('(display-mode: standalone)').matches) return
     if (localStorage.getItem('pwa_dismissed')) return
 
-    const handler = e => { e.preventDefault(); promptRef.current = e; setReady(true) }
-    window.addEventListener('beforeinstallprompt', handler)
-    return () => window.removeEventListener('beforeinstallprompt', handler)
+    // Event may have already fired before React mounted (captured in index.html)
+    if (window.__pwaPrompt) {
+      promptRef.current = window.__pwaPrompt
+      setReady(true)
+      return
+    }
+
+    // Otherwise wait for the custom event dispatched by the early-capture script
+    const handleReady = () => {
+      if (window.__pwaPrompt) {
+        promptRef.current = window.__pwaPrompt
+        setReady(true)
+      }
+    }
+    window.addEventListener('pwainstallready', handleReady)
+    return () => window.removeEventListener('pwainstallready', handleReady)
   }, [])
 
   const install = async () => {
@@ -50,6 +62,7 @@ function useInstallPrompt() {
     const { outcome } = await promptRef.current.userChoice
     if (outcome === 'dismissed') localStorage.setItem('pwa_dismissed', '1')
     promptRef.current = null
+    window.__pwaPrompt = null
     setReady(false)
   }
 

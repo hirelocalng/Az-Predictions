@@ -20,6 +20,16 @@
     <meta name="apple-mobile-web-app-title" content="AZ Predict" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
 
+    <!-- Capture PWA install prompt BEFORE React mounts (fires very early) -->
+    <script>
+      window.__pwaPrompt = null;
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window.__pwaPrompt = e;
+        window.dispatchEvent(new Event('pwainstallready'));
+      });
+    </script>
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

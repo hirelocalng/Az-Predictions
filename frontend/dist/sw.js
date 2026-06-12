@@ -1,6 +1,6 @@
-/* AZ Prediction — Service Worker v1 */
+/* AZ Prediction — Service Worker v2 */
 
-const CACHE = 'az-predict-v1';
+const CACHE = 'az-predict-v2';
 
 // Pre-cache the app shell (hashed Vite assets are cached at runtime below)
 const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];

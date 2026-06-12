@@ -244,6 +244,9 @@ export default function App() {
                 <TelegramIcon size={15} />&ensp;@AZPREDICTS — Free Daily Tips on Telegram
               </a>
             </div>
+            <div style={{ marginTop: 10 }}>
+              <button className="footer-admin-link" onClick={() => navigate('/admin')}>Admin</button>
+            </div>
           </footer>
           <TelegramFloat />
         </div>

@@ -624,6 +624,12 @@ body::after {
 .footer strong { color: var(--text-muted); }
 .footer-tg { margin-top: 12px; }
 .footer-text { text-align: center; margin-top: 32px; font-size: 0.68rem; color: var(--text-subtle); }
+.footer-admin-link {
+  background: none; border: none; cursor: pointer; font-family: var(--font);
+  font-size: 0.65rem; color: var(--text-subtle); opacity: 0.4;
+  transition: opacity var(--transition); padding: 0;
+}
+.footer-admin-link:hover { opacity: 1; color: var(--text-muted); }
 
 /* ── Results section ───────────────────────────────────────────────────────── */
 .res-stats-row { display: flex; gap: 16px; margin-bottom: 40px; flex-wrap: wrap; }

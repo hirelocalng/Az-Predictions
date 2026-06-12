@@ -15,7 +15,7 @@ Run:
     python app.py
 """
 
-from flask import Flask, jsonify, send_from_directory, request, g
+from flask import Flask, jsonify, send_from_directory, request, g, session
 from flask_cors import CORS
 from contextlib import contextmanager
 import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading, secrets, functools, re
@@ -31,7 +31,8 @@ warnings.filterwarnings('ignore')
 # ── App setup ─────────────────────────────────────────────────────────────────
 
 app = Flask(__name__, static_folder='frontend/dist', static_url_path='')
-CORS(app)
+app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
+CORS(app, supports_credentials=True)
 
 # ── Load club models ──────────────────────────────────────────────────────────
 
@@ -545,12 +546,24 @@ def _require_admin(f):
         pw = request.headers.get('X-Admin-Password', '') or request.args.get('admin_pw', '')
         if pw != _ADMIN_PASSWORD:
             return jsonify({'error': 'Unauthorized'}), 403
+        session['az_admin'] = True   # stamp session so /admin/analytics can check it
+        return f(*args, **kwargs)
+    return _wrapper
+
+
+def _require_admin_session(f):
+    """Protects routes that browsers navigate to directly — checks the session
+    cookie set by any successful _require_admin call, not a URL parameter."""
+    @functools.wraps(f)
+    def _wrapper(*args, **kwargs):
+        if not session.get('az_admin'):
+            return jsonify({'error': 'Unauthorized — open the admin panel first'}), 403
         return f(*args, **kwargs)
     return _wrapper
 
 
 @app.route('/admin/analytics')
-@_require_admin
+@_require_admin_session
 def admin_analytics():
     if not _DB_CONN_URL:
         return jsonify({'error': 'Database not configured'}), 503

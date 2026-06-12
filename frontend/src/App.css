@@ -1627,3 +1627,96 @@ body::after {
   .admin-row         { grid-template-columns: 1fr; }
   .admin-tip-row     { flex-direction: column; align-items: flex-start; }
 }
+
+/* ── Comprehensive mobile overhaul ───────────────────────────────────────────── */
+
+/* 768 px patch — augments existing 768 breakpoint */
+@media (max-width: 768px) {
+  /* Countdown */
+  .countdown-wrap    { padding: 20px 20px; gap: 20px; }
+
+  /* Best bet — reduce oversized typography */
+  .bb-pick           { font-size: 1.25rem; }
+  .bb-conf-num       { font-size: 2rem; }
+
+  /* Accumulator row padding */
+  .acca-row          { padding: 14px 16px; }
+  .acca-combined     { padding: 14px 16px; }
+
+  /* Results — let competition column shrink naturally */
+  .res-row-comp      { min-width: 0; max-width: 120px; }
+
+  /* Section header breathing room */
+  .section-header    { margin-bottom: 36px; }
+}
+
+/* 480 px patch — augments existing 480 breakpoint */
+@media (max-width: 480px) {
+  /* ── Header logo: hide "PREDICTION" text so logo fits on narrow phones ── */
+  .logo-prediction   { display: none; }
+  .logo-divider      { display: none; }
+  .logo-az           { font-size: 1.5rem; }
+
+  /* Tighter nav button so user-area fits */
+  .nav-btn           { padding: 5px 10px; font-size: 0.72rem; }
+
+  /* Hero */
+  .hero              { padding: 72px 16px 48px; }
+  .section           { padding: 48px 4%; }
+
+  /* Countdown card + wrap */
+  .countdown-card    { padding: 20px 16px; }
+  .countdown-wrap    { padding: 16px 16px; gap: 16px; }
+  .countdown-fixture { gap: 14px; }
+  .countdown-flag img          { width: 60px; height: 45px; }
+  .countdown-flag-fallback     { width: 60px; height: 45px; font-size: 0.6rem; }
+  .timer-unit        { min-width: 44px; }
+  .timer-sep         { font-size: 1.4rem; padding: 0; }
+
+  /* Best bet card */
+  .bb-pick           { font-size: 1.1rem; }
+  .bb-conf-num       { font-size: 1.75rem; }
+  .bb-match          { font-size: 1rem; }
+
+  /* Accumulator */
+  .acca-row          { padding: 12px 14px; }
+  .acca-combined     { padding: 12px 14px; }
+  .acca-match        { font-size: 0.82rem; }
+  .acca-pick-label   { font-size: 0.76rem; }
+
+  /* Results stats strip */
+  .res-stat-num      { font-size: 1.5rem; }
+  .res-stat-card     { padding: 12px 10px; }
+  .res-row           { padding: 12px 14px; }
+
+  /* Gate / premium */
+  .premium-gate      { padding: 40px 16px; }
+  .gate-title        { font-size: 1.1rem; }
+  .gate-desc         { font-size: 0.78rem; }
+
+  /* Hero metrics */
+  .metric-num        { font-size: 1.5rem; }
+}
+
+/* 360 px — very small phones (Galaxy A series, older iPhones) */
+@media (max-width: 360px) {
+  html               { font-size: 14px; }
+  .logo-az           { font-size: 1.3rem; }
+  .hero-title        { font-size: 1.85rem; }
+  .hero-metrics      { gap: 14px; }
+  .metric-num        { font-size: 1.35rem; }
+  .nav-btn           { padding: 4px 8px; font-size: 0.7rem; }
+
+  /* Timer — keep all 4 units on one line */
+  .timer-unit        { min-width: 38px; }
+  .timer-sep         { font-size: 1.2rem; }
+  .timer-num         { font-size: 1.6rem; }
+
+  /* countdown fixture flags */
+  .countdown-flag img          { width: 48px; height: 36px; }
+  .countdown-flag-fallback     { width: 48px; height: 36px; }
+  .countdown-fixture { gap: 10px; }
+
+  /* Section */
+  .section           { padding: 40px 3.5%; }
+}

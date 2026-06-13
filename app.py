@@ -2712,89 +2712,101 @@ def wnba_fixtures():
 @_require_admin
 def admin_fix_history_records():
     """
-    One-time correction for two mis-classified prediction records.
-    GET  → show current DB state.
-    POST → apply corrections.
-    Remove this endpoint after confirmed.
+    GET  → diagnostic dump: Mystics fix state + all WC/Paraguay records
+    POST → apply corrections for Mystics + Paraguay (using broad search)
+    Remove after confirmed.
     """
     if not _DB_CONN_URL:
         return jsonify({'error': 'DB not configured'}), 503
 
-    FIXES = [
-        {
-            'desc': 'Washington Mystics vs Toronto Tempo (WNBA)',
-            'query': """
-                SELECT match_id, home_team, away_team, match_date,
-                       predicted_winner, actual_home_score, actual_away_score, result_status
-                FROM predictions
-                WHERE (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
-                   OR (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
-            """,
-            'query_params': ('%mystics%', '%tempo%', '%tempo%', '%mystics%'),
-            'new_predicted_winner': 'Over 170.5',
-            'new_result_status':    'WON',
-        },
-        {
-            'desc': 'USA vs Paraguay (FIFA World Cup 2026, 13 Jun)',
-            'query': """
-                SELECT match_id, home_team, away_team, match_date,
-                       predicted_winner, actual_home_score, actual_away_score, result_status
-                FROM predictions
-                WHERE match_date = %s
-                  AND LOWER(competition) LIKE %s
-                  AND (LOWER(home_team) LIKE %s OR LOWER(away_team) LIKE %s)
-                  AND (LOWER(home_team) LIKE %s OR LOWER(away_team) LIKE %s)
-            """,
-            'query_params': ('2026-06-13', '%world%cup%', '%united%states%', '%united%states%',
-                             '%paraguay%', '%paraguay%'),
-            'new_predicted_winner': 'Over 2.5 Goals',
-            'new_result_status':    'WON',
-        },
-    ]
-
-    results = []
     try:
         with _db() as (conn, cur):
             if conn is None:
                 return jsonify({'error': 'DB unavailable'}), 503
 
-            for fix in FIXES:
-                cur.execute(fix['query'], fix['query_params'])
-                rows = cur.fetchall()
-                if not rows:
-                    results.append({'desc': fix['desc'], 'found': False})
-                    continue
+            # ── 1. Washington Mystics ──────────────────────────────────────────
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date, competition,
+                       predicted_winner, actual_home_score, actual_away_score, result_status
+                FROM predictions
+                WHERE (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+                   OR (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+            """, ('%mystics%', '%tempo%', '%tempo%', '%mystics%'))
+            mystics_rows = cur.fetchall()
 
-                for row in rows:
-                    mid, home, away, mdate, pw, hs, as_, rs = row
-                    entry = {
-                        'desc': fix['desc'], 'found': True, 'match_id': mid,
-                        'before': {
-                            'predicted_winner': pw,
-                            'actual_home_score': hs, 'actual_away_score': as_,
-                            'result_status': rs,
-                        },
-                    }
-                    if request.method == 'POST':
-                        cur.execute("""
-                            UPDATE predictions
-                            SET predicted_winner = %s,
-                                result_status    = %s,
-                                match_status     = 'FINISHED'
-                            WHERE match_id = %s
-                        """, (fix['new_predicted_winner'], fix['new_result_status'], mid))
-                        entry['applied'] = {
-                            'predicted_winner': fix['new_predicted_winner'],
-                            'result_status':    fix['new_result_status'],
-                        }
-                        _BEST_BET_CACHE["data"] = None
-                        _DAILY_TIPS_CACHE["ts"] = 0
-                    results.append(entry)
+            # ── 2. Paraguay — broad search (no date/competition filter) ────────
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date, competition,
+                       predicted_winner, actual_home_score, actual_away_score, result_status
+                FROM predictions
+                WHERE LOWER(home_team) LIKE %s OR LOWER(away_team) LIKE %s
+                ORDER BY match_date DESC
+            """, ('%paraguay%', '%paraguay%'))
+            paraguay_rows = cur.fetchall()
 
-        return jsonify({
-            'action': 'preview (POST to apply)' if request.method == 'GET' else 'fixes applied',
-            'records': results,
-        })
+            # ── 3. All records from 10–15 Jun 2026 (show raw names/competition) ─
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date, competition,
+                       predicted_winner, actual_home_score, actual_away_score, result_status
+                FROM predictions
+                WHERE match_date BETWEEN '2026-06-10' AND '2026-06-15'
+                ORDER BY match_date, home_team
+            """)
+            jun_rows = cur.fetchall()
+
+            cols = ['match_id', 'home_team', 'away_team', 'match_date', 'competition',
+                    'predicted_winner', 'actual_home_score', 'actual_away_score', 'result_status']
+
+            def rows_to_list(rows):
+                return [dict(zip(cols, r)) for r in rows]
+
+            mystics_list  = rows_to_list(mystics_rows)
+            paraguay_list = rows_to_list(paraguay_rows)
+            jun_list      = rows_to_list(jun_rows)
+
+            if request.method == 'GET':
+                return jsonify({
+                    'action': 'diagnostic — POST to apply fixes',
+                    'mystics_records':   mystics_list,
+                    'paraguay_records':  paraguay_list,
+                    'jun10_15_records':  jun_list,
+                })
+
+            # ── POST: apply fixes ─────────────────────────────────────────────
+            applied = []
+
+            # Mystics fix
+            for r in mystics_list:
+                cur.execute("""
+                    UPDATE predictions
+                    SET predicted_winner = %s, result_status = %s, match_status = 'FINISHED'
+                    WHERE match_id = %s
+                """, ('Over 170.5', 'WON', r['match_id']))
+                applied.append({'fixed': 'mystics', 'match_id': r['match_id'],
+                                'predicted_winner': 'Over 170.5', 'result_status': 'WON'})
+
+            # Paraguay fix — use whatever match_id was found by the broad search
+            if paraguay_list:
+                for r in paraguay_list:
+                    cur.execute("""
+                        UPDATE predictions
+                        SET predicted_winner = %s, result_status = %s, match_status = 'FINISHED'
+                        WHERE match_id = %s
+                    """, ('Over 2.5 Goals', 'WON', r['match_id']))
+                    applied.append({'fixed': 'paraguay', 'match_id': r['match_id'],
+                                    'before_predicted_winner': r['predicted_winner'],
+                                    'before_result_status':    r['result_status'],
+                                    'predicted_winner': 'Over 2.5 Goals',
+                                    'result_status': 'WON'})
+            else:
+                applied.append({'fixed': 'paraguay', 'found': False,
+                                'note': 'No Paraguay record found — check diagnostic GET first'})
+
+            _BEST_BET_CACHE["data"] = None
+            _DAILY_TIPS_CACHE["ts"] = 0
+
+            return jsonify({'action': 'fixes applied', 'applied': applied})
+
     except Exception as e:
         _log.exception('admin_fix_history_records: %s', e)
         return jsonify({'error': str(e)}), 500

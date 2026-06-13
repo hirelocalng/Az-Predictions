@@ -168,6 +168,7 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_minute VARCHAR(10)",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS actual_corners INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS sport VARCHAR(20) DEFAULT 'football'",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS prediction_payload JSONB",
             ]:
                 cur.execute(_col)
             cur.execute("""
@@ -260,6 +261,22 @@ def _save_prediction(tip):
     cor_str    = 'Over 9.5' if corners >= 0.5 else 'Under 9.5'
 
     # ── PostgreSQL ────────────────────────────────────────────────────────────
+    # Build a serialisable payload of all probabilities so the terminal can
+    # read back the exact same values the website computed.
+    import json as _json
+    _payload = _json.dumps({
+        'home_win':      round(float(tip.get('home_win', 0) or 0), 4),
+        'draw':          round(float(tip.get('draw', 0) or 0), 4),
+        'away_win':      round(float(tip.get('away_win', 0) or 0), 4),
+        'over_goals':    round(float(tip.get('over_goals', 0.5) or 0.5), 4),
+        'btts':          round(float(tip.get('btts', 0.48) or 0.48), 4),
+        'over_corners':  round(float(tip.get('over_corners', 0.52) or 0.52), 4),
+        'best_bet':      (tip.get('best_bet') or {}).get('label', pw),
+        'best_bet_conf': round((tip.get('best_bet') or {}).get('confidence', 0) or 0, 4),
+        'resolved_home': tip.get('resolved_home', home),
+        'resolved_away': tip.get('resolved_away', away),
+        'sport':         'football',
+    })
     try:
         with _db() as (conn, cur):
             if conn is not None:
@@ -267,17 +284,19 @@ def _save_prediction(tip):
                     INSERT INTO predictions
                         (match_id, home_team, away_team, match_date, match_time,
                          competition, predicted_winner, predicted_goals,
-                         predicted_btts, predicted_corners, result_status, kickoff_utc)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
+                         predicted_btts, predicted_corners, result_status,
+                         kickoff_utc, prediction_payload)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s::jsonb)
                     ON CONFLICT (match_id) DO UPDATE
-                        SET predicted_winner  = EXCLUDED.predicted_winner,
-                            predicted_goals   = EXCLUDED.predicted_goals,
-                            predicted_btts    = EXCLUDED.predicted_btts,
-                            predicted_corners = EXCLUDED.predicted_corners,
-                            kickoff_utc       = EXCLUDED.kickoff_utc
+                        SET predicted_winner   = EXCLUDED.predicted_winner,
+                            predicted_goals    = EXCLUDED.predicted_goals,
+                            predicted_btts     = EXCLUDED.predicted_btts,
+                            predicted_corners  = EXCLUDED.predicted_corners,
+                            kickoff_utc        = EXCLUDED.kickoff_utc,
+                            prediction_payload = EXCLUDED.prediction_payload
                         WHERE predictions.result_status = 'PENDING'
                 """, (mid, home, away, match_date, mtime, comp, pw,
-                      pg_str, btts_str, cor_str, kickoff))
+                      pg_str, btts_str, cor_str, kickoff, _payload))
                 return
     except Exception as e:
         _log.warning('DB save failed, falling back to JSON: %s', e)
@@ -330,6 +349,7 @@ def _compute_best_bet(tip):
 
 def _save_basketball_prediction(game, pred, sport):
     """Save an NBA or WNBA prediction to history."""
+    import json as _json
     home  = (game.get('home_team') or '').strip()
     away  = (game.get('away_team') or '').strip()
     date  = (game.get('date') or '')
@@ -342,6 +362,21 @@ def _save_basketball_prediction(game, pred, sport):
     time_   = (game.get('time') or '')
     kickoff = f"{date}T{time_}:00Z" if time_ else f"{date}T23:00:00Z"
 
+    # Store complete prediction so terminal can read back exact same values.
+    _payload = _json.dumps({
+        'home_win_pct':   pred.get('home_win_pct'),
+        'away_win_pct':   pred.get('away_win_pct'),
+        'predicted_winner': pred.get('predicted_winner'),
+        'win_probability':  pred.get('win_probability'),
+        'over_pct':         pred.get('over_pct'),
+        'under_pct':        pred.get('under_pct'),
+        'predicted_ou':     pred.get('predicted_ou'),
+        'ou_probability':   pred.get('ou_probability'),
+        'best_bet':         pred.get('best_bet'),
+        'best_bet_type':    pred.get('best_bet_type'),
+        'sport':            sport,
+    })
+
     try:
         with _db() as (conn, cur):
             if conn is not None:
@@ -349,14 +384,15 @@ def _save_basketball_prediction(game, pred, sport):
                     INSERT INTO predictions
                         (match_id, home_team, away_team, match_date, match_time,
                          competition, predicted_winner, predicted_goals,
-                         result_status, kickoff_utc, sport)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s)
+                         result_status, kickoff_utc, sport, prediction_payload)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s,%s::jsonb)
                     ON CONFLICT (match_id) DO UPDATE
-                        SET predicted_winner = EXCLUDED.predicted_winner,
-                            predicted_goals  = EXCLUDED.predicted_goals,
-                            kickoff_utc      = EXCLUDED.kickoff_utc
+                        SET predicted_winner   = EXCLUDED.predicted_winner,
+                            predicted_goals    = EXCLUDED.predicted_goals,
+                            kickoff_utc        = EXCLUDED.kickoff_utc,
+                            prediction_payload = EXCLUDED.prediction_payload
                         WHERE predictions.result_status = 'PENDING'
-                """, (mid, home, away, date, time_, comp, pw, pg, kickoff, sport))
+                """, (mid, home, away, date, time_, comp, pw, pg, kickoff, sport, _payload))
                 return
     except Exception as e:
         _log.warning('Basketball DB save failed: %s', e)
@@ -2981,6 +3017,83 @@ def admin_recalc_pending():
 
     except Exception as e:
         _log.exception('admin_recalc_pending: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/stored-prediction')
+def stored_prediction():
+    """
+    Return the stored prediction (including full probability payload) for a match.
+
+    Terminal scripts call this so they display the exact same values as the website.
+
+    Query params:
+      home   – home team name (required)
+      away   – away team name (required)
+      date   – YYYY-MM-DD (optional; searched by team names if omitted)
+      sport  – 'football' | 'nba' | 'wnba' (optional filter)
+
+    On match: returns {'found': True, 'prediction': { ... }}
+    No match: returns {'found': False}
+    """
+    home  = (request.args.get('home', '') or '').strip()
+    away  = (request.args.get('away', '') or '').strip()
+    date  = (request.args.get('date', '') or '').strip()
+    sport = (request.args.get('sport', '') or '').strip().lower()
+
+    if not home or not away:
+        return jsonify({'error': 'home and away are required'}), 400
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cols_sql = """
+                match_id, home_team, away_team, match_date, match_time,
+                competition, predicted_winner, predicted_goals,
+                predicted_btts, predicted_corners,
+                result_status, kickoff_utc,
+                COALESCE(sport, 'football') AS sport,
+                prediction_payload
+            """
+
+            if date:
+                mid = _match_key(home, away, date)
+                cur.execute(f"SELECT {cols_sql} FROM predictions WHERE match_id = %s", (mid,))
+                row = cur.fetchone()
+            else:
+                # Search by team names; prefer PENDING, then most recent
+                sport_filter = "AND LOWER(sport) = %s" if sport else ""
+                params = [f'%{home.lower()}%', f'%{away.lower()}%']
+                if sport:
+                    params.append(sport)
+                cur.execute(f"""
+                    SELECT {cols_sql} FROM predictions
+                    WHERE (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+                      {sport_filter}
+                    ORDER BY
+                        CASE result_status WHEN 'PENDING' THEN 0 WHEN 'LIVE' THEN 1 ELSE 2 END,
+                        match_date DESC
+                    LIMIT 1
+                """, params)
+                row = cur.fetchone()
+
+            if not row:
+                return jsonify({'found': False, 'home': home, 'away': away, 'date': date})
+
+            col_names = ['match_id', 'home_team', 'away_team', 'match_date', 'match_time',
+                         'competition', 'predicted_winner', 'predicted_goals',
+                         'predicted_btts', 'predicted_corners',
+                         'result_status', 'kickoff_utc', 'sport', 'prediction_payload']
+            d = dict(zip(col_names, row))
+            # prediction_payload comes back as dict from psycopg3 JSONB; serialise for older clients
+            if isinstance(d.get('prediction_payload'), dict):
+                pass  # already a dict — leave it
+            return jsonify({'found': True, 'prediction': d})
+
+    except Exception as e:
+        _log.exception('stored_prediction: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

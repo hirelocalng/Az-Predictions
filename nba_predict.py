@@ -593,29 +593,112 @@ def get_wnba_fixtures(start_date=None, end_date=None):
     return result
 
 
-# ─── CLI test ─────────────────────────────────────────────────────────────────
+# ─── Shared site-query helper ────────────────────────────────────────────────
+
+# Terminal scripts query this endpoint so they display the SAME values as the
+# website — identical BDL snapshot, identical probabilities, no divergence.
+SITE_URL = os.environ.get('AZPREDICTS_URL', 'https://azpredicts.com').rstrip('/')
+
+
+def _query_site(home, away, date='', sport=''):
+    """
+    Fetch the stored prediction for a match from azpredicts.com.
+    Returns the prediction_payload dict on success, or None if unavailable.
+    """
+    import urllib.request, urllib.parse, json, ssl
+    params = urllib.parse.urlencode({k: v for k, v in {
+        'home': home, 'away': away, 'date': date, 'sport': sport,
+    }.items() if v})
+    url = f"{SITE_URL}/api/stored-prediction?{params}"
+    try:
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(url, timeout=8, context=ctx) as r:
+            d = json.loads(r.read())
+            if d.get('found') and d.get('prediction', {}).get('prediction_payload'):
+                return d['prediction']['prediction_payload']
+    except Exception:
+        pass
+    return None
+
+
+def _print_basketball_pred(home, away, date, pred, source):
+    """Pretty-print a basketball prediction dict to stdout."""
+    sep = '═' * 64
+    sport_tag = pred.get('sport', '').upper() or 'NBA'
+    ou_line   = WNBA_OU_LINE if 'WNBA' in sport_tag else NBA_OU_LINE
+    print(f"\n{sep}")
+    print(f"  {away} @ {home}  ·  {date}  [{sport_tag}]")
+    print(f"  Source: {source}")
+    print(f"{'─' * 64}")
+    print(f"  Home Win  : {pred.get('home_win_pct', '?')}%   ({home})")
+    print(f"  Away Win  : {pred.get('away_win_pct', '?')}%   ({away})")
+    print(f"{'─' * 64}")
+    ou_label = pred.get('predicted_ou') or f"Over {ou_line}"
+    over_pct  = pred.get('over_pct', '?')
+    under_pct = pred.get('under_pct', '?')
+    print(f"  Over  {ou_line} : {over_pct}%")
+    print(f"  Under {ou_line} : {under_pct}%")
+    print(f"{'─' * 64}")
+    bb     = pred.get('best_bet', pred.get('predicted_winner', '?'))
+    bb_pct = pred.get('win_probability') if pred.get('best_bet_type') == 'result' else pred.get('ou_probability')
+    btype  = pred.get('best_bet_type', '?')
+    print(f"  ★ BEST BET  : {bb}  ({bb_pct}%)  [{btype}]")
+    print(f"{sep}\n")
+
+
+# ─── CLI ─────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    print("NBA today's games:")
+    import sys
+    _force_local = '--local' in sys.argv  # bypass site query for debugging
+
+    def _show(g, sport):
+        home  = g['home_team']
+        away  = g['away_team']
+        date  = g.get('date', '')
+        print(f"  {away} @ {home}  [{g.get('status', '')}]")
+
+        # Step 1: try site (authoritative — same data as website)
+        if not _force_local:
+            payload = _query_site(home, away, date=date, sport=sport)
+            if payload:
+                _print_basketball_pred(home, away, date, payload,
+                                       source=SITE_URL)
+                return
+
+        # Step 2: local computation fallback (may differ from website if BDL data
+        #         has changed since the website last refreshed — expected)
+        print(f"  [local computation — may differ from website by up to 30 min]")
+        pred = predict_nba(home, away) if sport == 'nba' else predict_wnba(home, away)
+        if 'error' not in pred:
+            pred['sport'] = sport.upper()
+            _print_basketball_pred(home, away, date, pred,
+                                   source='local BDL fetch (NOT from website cache)')
+        else:
+            print(f"  Prediction error: {pred['error']}")
+
+    print("═" * 64)
+    print("  NBA — upcoming games")
+    print("═" * 64)
     games = get_nba_fixtures()
     if games:
-        for g in games[:3]:
-            print(f"  {g['away_team']} @ {g['home_team']}  [{g['status']}]")
-            pred = predict_nba(g['home_team'], g['away_team'])
-            print(f"  -> {pred}")
+        for g in games[:5]:
+            _show(g, 'nba')
     else:
-        print("  No games today. Test prediction: Lakers vs Celtics")
-        pred = predict_nba('Los Angeles Lakers', 'Boston Celtics')
-        print(f"  -> {pred}")
+        print("  No NBA games in window. Test: Lakers vs Celtics")
+        g = {'home_team': 'Boston Celtics', 'away_team': 'Oklahoma City Thunder',
+             'date': '', 'status': 'Test'}
+        _show(g, 'nba')
 
-    print("\nWNBA today's games:")
+    print("═" * 64)
+    print("  WNBA — upcoming games")
+    print("═" * 64)
     wgames = get_wnba_fixtures()
     if wgames:
-        for g in wgames[:3]:
-            print(f"  {g['away_team']} @ {g['home_team']}  [{g['status']}]")
-            pred = predict_wnba(g['home_team'], g['away_team'])
-            print(f"  -> {pred}")
+        for g in wgames[:5]:
+            _show(g, 'wnba')
     else:
-        print("  No WNBA games today. Test: Seattle Storm vs Las Vegas Aces")
-        pred = predict_wnba('Seattle Storm', 'Las Vegas Aces')
-        print(f"  -> {pred}")
+        print("  No WNBA games in window. Test: Seattle Storm vs Las Vegas Aces")
+        g = {'home_team': 'Seattle Storm', 'away_team': 'Las Vegas Aces',
+             'date': '', 'status': 'Test'}
+        _show(g, 'wnba')

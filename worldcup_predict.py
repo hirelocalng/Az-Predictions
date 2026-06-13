@@ -19,6 +19,30 @@ import pandas as pd
 
 warnings.filterwarnings('ignore')
 
+# --- Site-query helper -------------------------------------------------------
+# Terminal queries the live website so it displays the exact same stored values.
+_SITE_URL = os.environ.get('AZPREDICTS_URL', 'https://azpredicts.com').rstrip('/')
+
+
+def _query_site(home, away, sport='football'):
+    """
+    Return the stored prediction_payload dict from azpredicts.com, or None.
+    If the website has already computed this match, use that — guaranteed match.
+    """
+    import urllib.request, urllib.parse, json, ssl
+    params = urllib.parse.urlencode({'home': home, 'away': away, 'sport': sport})
+    url    = f"{_SITE_URL}/api/stored-prediction?{params}"
+    try:
+        ctx = ssl.create_default_context()
+        with urllib.request.urlopen(url, timeout=8, context=ctx) as r:
+            d = json.loads(r.read())
+            if d.get('found') and d.get('prediction', {}).get('prediction_payload'):
+                return d['prediction']['prediction_payload']
+    except Exception:
+        pass
+    return None
+
+
 # --- Config ------------------------------------------------------------------
 
 _BASE_DIR           = os.path.dirname(os.path.abspath(__file__))
@@ -423,7 +447,8 @@ def print_h2h_summary(df, team_a, team_b, n=10):
 
 # --- Main ---------------------------------------------------------------------
 
-def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'):
+def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup',
+            force_local=False):
     # Handle --list flag (needs raw data, bypass predict_match)
     if team_a_raw == '--list':
         df        = load_data()
@@ -431,7 +456,39 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
         print('\n'.join(all_teams))
         return
 
-    # Delegate to predict_match so CLI and website use identical computation.
+    sep = '=' * 62
+
+    # ── Step 1: try the live website (source of truth) ────────────────────────
+    if not force_local:
+        payload = _query_site(team_a_raw, team_b_raw, sport='football')
+        if payload:
+            ph  = payload.get('home_win', 0)
+            pd_ = payload.get('draw', 0)
+            pa  = payload.get('away_win', 0)
+            pg  = payload.get('over_goals', 0.5)
+            pb  = payload.get('btts', 0.48)
+            pc  = payload.get('over_corners', 0.52)
+            ta  = payload.get('resolved_home', team_a_raw)
+            tb  = payload.get('resolved_away', team_b_raw)
+            bb  = payload.get('best_bet', '')
+            bc  = payload.get('best_bet_conf', 0)
+
+            # Load local data only for form/H2H narrative (doesn't affect probabilities)
+            df = _PRED_DF if _PRED_DF is not None else load_data()
+
+            print(f'\n{sep}')
+            print(f'  MATCH PREDICTION  [Source: {_SITE_URL} — live data]')
+            print(f'  {ta}  vs  {tb}')
+            print(f'  Tournament : {tournament}')
+            print(f'  Venue      : {"Neutral (averaged)" if is_neutral else f"{ta} home"}')
+            print(sep)
+
+            _print_football_pred(df, ta, tb, ph, pd_, pa, pg, pb, pc, bb, bc)
+            return
+
+    # ── Step 2: local computation fallback ───────────────────────────────────
+    # Football is deterministic (static CSV + models), so local == website
+    # as long as the data files haven't been updated.  Print a note anyway.
     pred = predict_match(team_a_raw, team_b_raw,
                          is_neutral=is_neutral, tournament=tournament)
 
@@ -441,35 +498,53 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     p_draw     = pred['draw']
     p_away_win = pred['away_win']
     p_over     = pred['over_goals']
-    p_under    = 1.0 - p_over
     p_btts     = pred['btts']
     p_corners  = pred['over_corners']
 
-    # For expected goals display, load data from the cached DF if available
-    df = _PRED_DF if _PRED_DF is not None else load_data()
-    home_form = get_team_form(df, team_a)
-    away_form = get_team_form(df, team_b)
-    exp_home_goals = (home_form['goals_scored'] + away_form['goals_conceded']) / 2
-    exp_away_goals = (away_form['goals_scored'] + home_form['goals_conceded']) / 2
-    exp_total      = exp_home_goals + exp_away_goals
+    bb_candidates = [
+        (p_home_win,                     f'{team_a} to Win'),
+        (p_draw,                         'Draw'),
+        (p_away_win,                     f'{team_b} to Win'),
+        (max(p_over, 1 - p_over),        'Over 2.5 Goals' if p_over >= 0.5 else 'Under 2.5 Goals'),
+        (max(p_btts, 1 - p_btts),        'BTTS Yes' if p_btts >= 0.5 else 'BTTS No'),
+        (max(p_corners, 1 - p_corners),  'Over 9.5 Corners' if p_corners >= 0.5 else 'Under 9.5 Corners'),
+    ]
+    best_conf, best_label = max(bb_candidates, key=lambda x: x[0])
 
-    # -- Output ---------------------------------------------------------------
-    sep = '=' * 58
+    df = _PRED_DF if _PRED_DF is not None else load_data()
+    src = 'local computation (website not reachable)' if not force_local else 'local computation (--local flag)'
     print(f'\n{sep}')
-    print(f'  MATCH PREDICTION')
+    print(f'  MATCH PREDICTION  [Source: {src}]')
     print(f'  {team_a}  vs  {team_b}')
     print(f'  Tournament : {tournament}')
     print(f'  Venue      : {"Neutral (averaged)" if is_neutral else f"{team_a} home"}')
     print(sep)
+    _print_football_pred(df, team_a, team_b,
+                         p_home_win, p_draw, p_away_win,
+                         p_over, p_btts, p_corners,
+                         best_label, best_conf)
 
-    # Recent form
+
+def _print_football_pred(df, team_a, team_b,
+                         p_home_win, p_draw, p_away_win,
+                         p_over, p_btts, p_corners,
+                         best_label, best_conf):
+    """Shared output formatter used by both site-sourced and local predictions."""
+    sep    = '=' * 62
+    p_under   = 1.0 - p_over
+
+    # Expected goals (local stat, narrative only — doesn't affect model output)
+    home_form      = get_team_form(df, team_a)
+    away_form      = get_team_form(df, team_b)
+    exp_home_goals = (home_form['goals_scored'] + away_form['goals_conceded']) / 2
+    exp_away_goals = (away_form['goals_scored'] + home_form['goals_conceded']) / 2
+
+    # Recent form + H2H
     form_a = print_recent_form(df, team_a)
     form_b = print_recent_form(df, team_b)
     print(f'\n  Recent form (last {FORM_WINDOW}, oldest->newest)')
     print(f'  {team_a:<30} {form_a}')
     print(f'  {team_b:<30} {form_b}')
-
-    # H2H
     h2h_lines = print_h2h_summary(df, team_a, team_b, n=5)
     if h2h_lines:
         print(f'\n  Last {min(5, len(h2h_lines))} H2H meetings:')
@@ -478,56 +553,43 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     else:
         print('\n  No previous H2H meetings found.')
 
-    # Result prediction
-    print(f'\n  -- RESULT PREDICTION --')
-    winner = (team_a if p_home_win > p_away_win and p_home_win > p_draw
-              else (team_b if p_away_win > p_home_win and p_away_win > p_draw
-                    else 'Draw'))
+    # Result
+    winner   = (team_a if p_home_win > p_away_win and p_home_win > p_draw
+                else (team_b if p_away_win > p_home_win and p_away_win > p_draw
+                      else 'Draw'))
     top_prob = max(p_home_win, p_draw, p_away_win)
-
+    print(f'\n  -- RESULT PREDICTION --')
     print(f'  {team_a} Win  : {p_home_win:6.1%}   {confidence_label(p_home_win) if winner==team_a else ""}')
     print(f'  Draw         : {p_draw:6.1%}   {confidence_label(p_draw) if winner=="Draw" else ""}')
     print(f'  {team_b} Win  : {p_away_win:6.1%}   {confidence_label(p_away_win) if winner==team_b else ""}')
     print(f'\n  Most likely: {winner}  ({top_prob:.1%} confidence)')
 
-    # Goals prediction
+    # Goals
+    goals_call = 'Over 2.5' if p_over >= 0.5 else 'Under 2.5'
     print(f'\n  -- GOALS PREDICTION --')
-    goals_call = 'Over 2.5' if p_over >= 0.50 else 'Under 2.5'
     print(f'  Over 2.5     : {p_over:6.1%}   {confidence_label(p_over) if goals_call=="Over 2.5" else ""}')
     print(f'  Under 2.5    : {p_under:6.1%}   {confidence_label(p_under) if goals_call=="Under 2.5" else ""}')
-    print(f'  Expected goals: {team_a} {exp_home_goals:.1f} vs {exp_away_goals:.1f} {team_b}  '
-          f'(total {exp_total:.1f})')
+    print(f'  Expected goals: {team_a} {exp_home_goals:.1f} vs {exp_away_goals:.1f} {team_b}')
     print(f'  Most likely: {goals_call}  ({max(p_over, p_under):.1%} confidence)')
 
-    # Corners prediction
-    corners_call = 'Over 9.5' if p_corners >= 0.50 else 'Under 9.5'
+    # Corners
+    corners_call = 'Over 9.5' if p_corners >= 0.5 else 'Under 9.5'
     print(f'\n  -- CORNERS PREDICTION --')
-    print(f'  Over 9.5     : {p_corners:6.1%}   {confidence_label(p_corners) if corners_call=="Over 9.5" else ""}')
-    print(f'  Under 9.5    : {1-p_corners:6.1%}   {confidence_label(1-p_corners) if corners_call=="Under 9.5" else ""}')
+    print(f'  Over 9.5     : {p_corners:6.1%}')
+    print(f'  Under 9.5    : {1 - p_corners:6.1%}')
     print(f'  Most likely: {corners_call}  ({max(p_corners, 1-p_corners):.1%} confidence)')
 
-    print(f'\n{sep}\n')
-
-    # Betting summary
-    print('  MARKET SUMMARY')
-    print(f'  Match Result  -> {winner} ({top_prob:.1%})')
-    print(f'  Goals O/U 2.5 -> {goals_call} ({max(p_over, p_under):.1%})')
+    # BTTS
     btts_call = 'BTTS Yes' if p_btts >= 0.5 else 'BTTS No'
+
+    # Summary
+    print(f'\n{sep}')
+    print(f'  MARKET SUMMARY')
+    print(f'  Match Result     -> {winner} ({top_prob:.1%})')
+    print(f'  Goals O/U 2.5    -> {goals_call} ({max(p_over, p_under):.1%})')
     print(f'  Both Teams Score -> {btts_call} ({max(p_btts, 1-p_btts):.1%})')
     print(f'  Corners O/U 9.5  -> {corners_call} ({max(p_corners, 1-p_corners):.1%})')
-
-    # Best bet across ALL markets — same logic as _compute_best_bet() in app.py
-    # so the terminal output matches what the website saves and displays.
-    all_market_candidates = [
-        (p_home_win,                    f'{team_a} to Win'),
-        (p_draw,                        'Draw'),
-        (p_away_win,                    f'{team_b} to Win'),
-        (max(p_over, p_under),          goals_call + ' Goals'),
-        (max(p_btts, 1 - p_btts),      btts_call),
-        (max(p_corners, 1 - p_corners), corners_call + ' Corners'),
-    ]
-    best_all_prob, best_all_label = max(all_market_candidates, key=lambda x: x[0])
-    print(f'\n  ★ BEST BET (website pick) → {best_all_label}  ({best_all_prob:.1%})')
+    print(f'\n  ★ BEST BET → {best_label}  ({best_conf:.1%})')
     print(f'{sep}\n')
 
 
@@ -651,23 +713,28 @@ def main():
         predict('--list', '')
         return
 
-    if len(sys.argv) >= 3:
-        team_a = sys.argv[1]
-        team_b = sys.argv[2]
+    force_local = '--local' in sys.argv
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+
+    if len(args) >= 2:
+        team_a = args[0]
+        team_b = args[1]
         neutral = '--home' not in sys.argv
         tournament = 'FIFA World Cup'
         for arg in sys.argv:
             if arg.startswith('--tournament='):
                 tournament = arg.split('=', 1)[1]
-        predict(team_a, team_b, is_neutral=neutral, tournament=tournament)
+        predict(team_a, team_b, is_neutral=neutral, tournament=tournament,
+                force_local=force_local)
     else:
         print('World Cup Match Predictor')
+        print('  Add --local to bypass website and compute locally.')
         print('-' * 30)
         team_a = input('Enter Team 1 (home / listed first): ').strip()
         team_b = input('Enter Team 2 (away / listed second): ').strip()
         neutral_in = input('Neutral venue? [Y/n]: ').strip().lower()
         is_neutral = neutral_in != 'n'
-        predict(team_a, team_b, is_neutral=is_neutral)
+        predict(team_a, team_b, is_neutral=is_neutral, force_local=force_local)
 
 
 if __name__ == '__main__':

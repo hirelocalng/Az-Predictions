@@ -1353,9 +1353,14 @@ def _sub_results(pred):
     total   = hs + as_
     sub     = {}
 
-    # Result
+    # Result — only for genuine match-result bets (team name or "draw").
+    # When predicted_winner holds an O/U, BTTS, or corners label (because that
+    # market had the highest confidence), skip this chip: it would always show
+    # LOST because the team name is not present in "Over 170.5" etc., and the
+    # correct market chip (goals/btts/corners) already covers the evaluation.
     pw = (pred.get('predicted_winner') or '').lower()
-    if pw:
+    _non_result_bet = any(x in pw for x in ('over', 'under', 'btts', 'corner'))
+    if pw and not _non_result_bet:
         if hs > as_:
             ok = home_l in pw
         elif as_ > hs:
@@ -2701,6 +2706,98 @@ def wnba_fixtures():
             if _WNBA_CACHE["data"] is None:
                 _WNBA_CACHE["data"] = []
     return jsonify(_WNBA_CACHE["data"] or [])
+
+
+@app.route('/admin/fix-history-records', methods=['GET', 'POST'])
+@_require_admin
+def admin_fix_history_records():
+    """
+    One-time correction for two mis-classified prediction records.
+    GET  → show current DB state.
+    POST → apply corrections.
+    Remove this endpoint after confirmed.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+
+    FIXES = [
+        {
+            'desc': 'Washington Mystics vs Toronto Tempo (WNBA)',
+            'query': """
+                SELECT match_id, home_team, away_team, match_date,
+                       predicted_winner, actual_home_score, actual_away_score, result_status
+                FROM predictions
+                WHERE (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+                   OR (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+            """,
+            'query_params': ('%mystics%', '%tempo%', '%tempo%', '%mystics%'),
+            'new_predicted_winner': 'Over 170.5',
+            'new_result_status':    'WON',
+        },
+        {
+            'desc': 'USA vs Paraguay (FIFA World Cup 2026, 13 Jun)',
+            'query': """
+                SELECT match_id, home_team, away_team, match_date,
+                       predicted_winner, actual_home_score, actual_away_score, result_status
+                FROM predictions
+                WHERE match_date = %s
+                  AND LOWER(competition) LIKE %s
+                  AND (LOWER(home_team) LIKE %s OR LOWER(away_team) LIKE %s)
+                  AND (LOWER(home_team) LIKE %s OR LOWER(away_team) LIKE %s)
+            """,
+            'query_params': ('2026-06-13', '%world%cup%', '%united%states%', '%united%states%',
+                             '%paraguay%', '%paraguay%'),
+            'new_predicted_winner': 'Over 2.5 Goals',
+            'new_result_status':    'WON',
+        },
+    ]
+
+    results = []
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            for fix in FIXES:
+                cur.execute(fix['query'], fix['query_params'])
+                rows = cur.fetchall()
+                if not rows:
+                    results.append({'desc': fix['desc'], 'found': False})
+                    continue
+
+                for row in rows:
+                    mid, home, away, mdate, pw, hs, as_, rs = row
+                    entry = {
+                        'desc': fix['desc'], 'found': True, 'match_id': mid,
+                        'before': {
+                            'predicted_winner': pw,
+                            'actual_home_score': hs, 'actual_away_score': as_,
+                            'result_status': rs,
+                        },
+                    }
+                    if request.method == 'POST':
+                        cur.execute("""
+                            UPDATE predictions
+                            SET predicted_winner = %s,
+                                result_status    = %s,
+                                match_status     = 'FINISHED'
+                            WHERE match_id = %s
+                        """, (fix['new_predicted_winner'], fix['new_result_status'], mid))
+                        entry['applied'] = {
+                            'predicted_winner': fix['new_predicted_winner'],
+                            'result_status':    fix['new_result_status'],
+                        }
+                        _BEST_BET_CACHE["data"] = None
+                        _DAILY_TIPS_CACHE["ts"] = 0
+                    results.append(entry)
+
+        return jsonify({
+            'action': 'preview (POST to apply)' if request.method == 'GET' else 'fixes applied',
+            'records': results,
+        })
+    except Exception as e:
+        _log.exception('admin_fix_history_records: %s', e)
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/results')

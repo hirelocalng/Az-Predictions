@@ -439,7 +439,38 @@ def _get_history():
                         row['saved_at'] = row['created_at'].isoformat()
                     row.pop('created_at', None)
                     rows.append(row)
-                return {'predictions': rows}
+                # In-memory dedup: if the same home+away appear with dates ≤2 days apart
+                # (UTC midnight-crossover duplicates), keep the most-complete row.
+                from datetime import date as _date_t, timedelta as _td_t
+                seen: dict = {}
+                deduped = []
+                for row in rows:
+                    key = (row.get('home_team','').lower().strip(),
+                           row.get('away_team','').lower().strip())
+                    if key not in seen:
+                        seen[key] = row
+                        deduped.append(row)
+                    else:
+                        existing = seen[key]
+                        try:
+                            d1 = _date_t.fromisoformat(str(existing.get('match_date','')))
+                            d2 = _date_t.fromisoformat(str(row.get('match_date','')))
+                            if abs((d1 - d2).days) > 2:
+                                # genuinely different fixtures (later stage); show both
+                                seen[key] = row
+                                deduped.append(row)
+                                continue
+                        except (ValueError, TypeError):
+                            pass
+                        # Same fixture — keep whichever is more complete
+                        e_score = existing.get('actual_home_score') is not None
+                        r_score = row.get('actual_home_score') is not None
+                        e_corn  = existing.get('actual_corners') is not None
+                        r_corn  = row.get('actual_corners') is not None
+                        if (r_score and not e_score) or (r_corn and not e_corn and e_score == r_score):
+                            deduped[-1] = row  # replace last appended with better row
+                            seen[key]   = row
+                return {'predictions': deduped}
     except Exception as e:
         _log.warning('DB get_history failed: %s', e)
     with _HISTORY_LOCK:
@@ -1451,8 +1482,9 @@ def _sub_results(pred):
     return sub
 
 
-def _resolve_result(pw, home, away, hs, as_):
-    """Return 'WON' or 'LOST' for any bet type given actual score."""
+def _resolve_result(pw, home, away, hs, as_, actual_corners=None):
+    """Return 'WON' or 'LOST' for any bet type given actual score (and optionally corners)."""
+    import re as _re
     if not pw:
         return 'LOST'
     pw_l  = pw.lower()
@@ -1464,13 +1496,17 @@ def _resolve_result(pw, home, away, hs, as_):
         thresh = 3.5 if '3.5' in pw_l else 2.5
         return 'WON' if (over and total > thresh) or (not over and total <= thresh) else 'LOST'
 
-    # Corners — can't determine from score alone; mark LOST to avoid inflating win rate
+    # Corners — evaluate if we have actual_corners, otherwise LOST (data unavailable)
     if 'corner' in pw_l:
+        if actual_corners is not None:
+            over   = 'over' in pw_l
+            _nums  = _re.findall(r'\d+\.?\d*', pw_l)
+            thresh = float(_nums[-1]) if _nums else 9.5
+            return 'WON' if (over and actual_corners > thresh) or (not over and actual_corners <= thresh) else 'LOST'
         return 'LOST'
 
     # Basketball / generic Over/Under (e.g. "Over 220.5", "Under 170.5")
     if 'over' in pw_l or 'under' in pw_l:
-        import re as _re
         over   = 'over' in pw_l
         _nums  = _re.findall(r'\d+\.?\d*', pw_l)
         thresh = float(_nums[-1]) if _nums else 220.5
@@ -2870,10 +2906,30 @@ def admin_backfill_corners():
                         pass
 
                 if corners is not None:
+                    # Write corners
                     cur.execute(
                         "UPDATE predictions SET actual_corners=%s WHERE match_id=%s",
                         (corners, mid),
                     )
+                    # Re-evaluate result_status when the best_bet is a corners market
+                    cur.execute(
+                        "SELECT predicted_winner, home_team, away_team, "
+                        "actual_home_score, actual_away_score "
+                        "FROM predictions WHERE match_id=%s",
+                        (mid,)
+                    )
+                    _row = cur.fetchone()
+                    if _row:
+                        _pw, _ht, _at, _hs, _as = _row
+                        if _pw and 'corner' in _pw.lower() and _hs is not None and _as is not None:
+                            _new_status = _resolve_result(
+                                _pw, _ht or '', _at or '', _hs, _as,
+                                actual_corners=corners,
+                            )
+                            cur.execute(
+                                "UPDATE predictions SET result_status=%s WHERE match_id=%s",
+                                (_new_status, mid),
+                            )
                     filled_n += 1
                     rows_out.append({'home_team': home, 'away_team': away,
                                      'match_date': date, 'corners': corners,
@@ -2895,6 +2951,91 @@ def admin_backfill_corners():
 
     except Exception as e:
         _log.exception('admin_backfill_corners: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/deduplicate', methods=['GET', 'POST'])
+@_require_admin
+def admin_deduplicate():
+    """
+    GET  → find duplicate prediction rows (same home+away, date ±2 days).
+    POST → delete the less-complete duplicate from each pair; keep the row
+           with actual scores, or if both/neither have scores, the newer one.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cur.execute("""
+                SELECT p1.match_id  AS id1,
+                       p2.match_id  AS id2,
+                       p1.home_team, p1.away_team,
+                       p1.match_date AS date1, p2.match_date AS date2,
+                       p1.result_status AS status1, p2.result_status AS status2,
+                       p1.actual_home_score AS hs1, p1.actual_away_score AS as1,
+                       p2.actual_home_score AS hs2, p2.actual_away_score AS as2,
+                       p1.actual_corners AS c1, p2.actual_corners AS c2,
+                       p1.created_at AS at1, p2.created_at AS at2,
+                       p1.predicted_winner AS pw1, p2.predicted_winner AS pw2
+                FROM predictions p1
+                JOIN predictions p2
+                  ON LOWER(p1.home_team) = LOWER(p2.home_team)
+                 AND LOWER(p1.away_team) = LOWER(p2.away_team)
+                 AND p1.match_id < p2.match_id
+                 AND ABS(p1.match_date - p2.match_date) <= 2
+                ORDER BY p1.home_team, p1.away_team, p1.match_date
+            """)
+            cols = [d[0] for d in cur.description]
+            pairs = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+            if request.method == 'GET':
+                # Serialize dates/timestamps
+                for p in pairs:
+                    for k in ('date1','date2','at1','at2'):
+                        if p.get(k) is not None:
+                            p[k] = str(p[k])
+                return jsonify({'duplicate_pairs': len(pairs), 'pairs': pairs})
+
+            # POST — delete the less-complete record from each pair
+            deleted = []
+            for p in pairs:
+                # Prefer the row that has actual scores; if tie prefer the one with corners;
+                # if still tied keep the newer one (at2 >= at1 since id1 < id2 by creation order)
+                p1_score = p['hs1'] is not None
+                p2_score = p['hs2'] is not None
+                p1_corners = p['c1'] is not None
+                p2_corners = p['c2'] is not None
+
+                if p1_score and not p2_score:
+                    delete_id = p['id2']
+                elif p2_score and not p1_score:
+                    delete_id = p['id1']
+                elif p1_corners and not p2_corners:
+                    delete_id = p['id2']
+                elif p2_corners and not p1_corners:
+                    delete_id = p['id1']
+                else:
+                    # Both equally complete — delete the older one
+                    delete_id = p['id1']
+
+                cur.execute("DELETE FROM predictions WHERE match_id=%s", (delete_id,))
+                deleted.append({
+                    'deleted': delete_id,
+                    'kept': p['id2'] if delete_id == p['id1'] else p['id1'],
+                    'match': f"{p['home_team']} vs {p['away_team']}",
+                })
+
+            return jsonify({
+                'action': 'deduplication complete',
+                'pairs_found': len(pairs),
+                'deleted': len(deleted),
+                'records': deleted,
+            })
+    except Exception as e:
+        _log.exception('admin_deduplicate: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

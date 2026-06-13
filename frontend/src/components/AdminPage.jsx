@@ -260,7 +260,103 @@ export default function AdminPage({ navigate }) {
         {/* Backfill Corners */}
         <BackfillCorners headers={headers} />
 
+        {/* Deduplicate */}
+        <DeduplicatePanel headers={headers} />
+
       </div>
+    </div>
+  )
+}
+
+function DeduplicatePanel({ headers }) {
+  const [status, setStatus] = useState('')
+  const [result, setResult] = useState(null)
+  const [busy,   setBusy]   = useState(false)
+
+  const run = async (apply) => {
+    if (apply && !window.confirm(
+      'This will permanently delete the less-complete duplicate row for each pair found. Continue?'
+    )) return
+    setBusy(true); setStatus(''); setResult(null)
+    try {
+      const r = await fetch('/admin/deduplicate', {
+        method: apply ? 'POST' : 'GET',
+        headers: headers(),
+      })
+      const d = await r.json()
+      setResult(d)
+      if (!r.ok) { setStatus('Error: ' + (d.error || r.status)); return }
+      setStatus(apply
+        ? `✅ Deleted ${d.deleted} duplicate row(s)`
+        : `Preview — ${d.duplicate_pairs} duplicate pair(s) found`)
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  return (
+    <div className="admin-card" style={{ marginTop: 20 }}>
+      <h3 style={{ marginBottom: 6, color: 'var(--amber)', fontSize: '0.95rem', fontWeight: 700 }}>
+        🔁 Deduplicate History
+      </h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
+        Finds prediction rows where the same two teams appear with match dates ≤2 days apart
+        (UTC midnight-crossover duplicates). Preview first, then delete the less-complete copy.
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="admin-btn" onClick={() => run(false)} disabled={busy}>Preview</button>
+        <button className="admin-btn admin-btn-lost" onClick={() => run(true)} disabled={busy}>
+          Delete Duplicates
+        </button>
+      </div>
+      {status && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem',
+          color: status.startsWith('✅') ? 'var(--green)'
+               : status.startsWith('Preview') ? 'var(--amber)' : 'var(--red)' }}>
+          {status}
+        </p>
+      )}
+      {result && result.pairs && result.pairs.length > 0 && (
+        <div style={{ marginTop: 14, overflowX: 'auto' }}>
+          <table style={{ width: '100%', fontSize: '0.72rem', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Match</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>ID 1</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Date 1</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Status 1</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>ID 2</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Date 2</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Status 2</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.pairs.map((p, i) => (
+                <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(255,255,255,.03)' : 'transparent' }}>
+                  <td style={{ padding: '4px 8px', color: 'var(--text)' }}>{p.home_team} vs {p.away_team}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)', fontSize: '0.65rem' }}>{p.id1}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{p.date1}</td>
+                  <td style={{ padding: '4px 8px' }}>{p.status1}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)', fontSize: '0.65rem' }}>{p.id2}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{p.date2}</td>
+                  <td style={{ padding: '4px 8px' }}>{p.status2}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {result && result.records && result.records.length > 0 && (
+        <ul style={{ marginTop: 12, fontSize: '0.78rem', color: 'var(--green)', paddingLeft: 16 }}>
+          {result.records.map((r, i) => (
+            <li key={i}>Deleted <code style={{ fontSize: '0.68rem' }}>{r.deleted}</code> → kept <code style={{ fontSize: '0.68rem' }}>{r.kept}</code> ({r.match})</li>
+          ))}
+        </ul>
+      )}
+      {result && result.duplicate_pairs === 0 && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem', color: 'var(--green)' }}>
+          ✅ No duplicates found — history is clean.
+        </p>
+      )}
     </div>
   )
 }

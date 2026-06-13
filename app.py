@@ -1882,10 +1882,9 @@ def _espn_extract_corners(comp, hc, ac):
     return total
 
 
-def _fetch_espn_result_dated(home_team, away_team, match_date):
-    """Like _fetch_espn_result but queries ESPN with a specific date — catches past-day results."""
+def _espn_search_date(home_team, away_team, date_compact):
+    """Search one date across all ESPN soccer slugs; return (hs, as_, corners) or None."""
     import requests as _req
-    date_compact = str(match_date).replace('-', '')
     for slug in _ESPN_LIVE_LEAGUES:
         url = f'https://site.api.espn.com/apis/site/v2/sports/soccer/{slug}/scoreboard'
         try:
@@ -1913,6 +1912,31 @@ def _fetch_espn_result_dated(home_team, away_team, match_date):
                     return as_, hs, corners
         except Exception as exc:
             _log.warning('ESPN dated result %s: %s', slug, exc)
+    return None
+
+
+def _fetch_espn_result_dated(home_team, away_team, match_date):
+    """
+    Query ESPN scoreboard for home_team vs away_team on match_date.
+    Also retries the previous day to handle US evening games where the
+    local date (used by ESPN) is one day behind the UTC kickoff date we store.
+    """
+    from datetime import date as _date, timedelta as _td
+    try:
+        d = _date.fromisoformat(str(match_date))
+    except (ValueError, TypeError):
+        d = None
+
+    dates_to_try = [str(match_date).replace('-', '')]
+    if d:
+        prev = (d - _td(days=1)).strftime('%Y%m%d')
+        if prev != dates_to_try[0]:
+            dates_to_try.append(prev)
+
+    for dc in dates_to_try:
+        result = _espn_search_date(home_team, away_team, dc)
+        if result is not None:
+            return result
     return None
 
 

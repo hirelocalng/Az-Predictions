@@ -269,7 +269,13 @@ def _save_prediction(tip):
                          competition, predicted_winner, predicted_goals,
                          predicted_btts, predicted_corners, result_status, kickoff_utc)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s)
-                    ON CONFLICT (match_id) DO NOTHING
+                    ON CONFLICT (match_id) DO UPDATE
+                        SET predicted_winner  = EXCLUDED.predicted_winner,
+                            predicted_goals   = EXCLUDED.predicted_goals,
+                            predicted_btts    = EXCLUDED.predicted_btts,
+                            predicted_corners = EXCLUDED.predicted_corners,
+                            kickoff_utc       = EXCLUDED.kickoff_utc
+                        WHERE predictions.result_status = 'PENDING'
                 """, (mid, home, away, match_date, mtime, comp, pw,
                       pg_str, btts_str, cor_str, kickoff))
                 return
@@ -2837,6 +2843,144 @@ def admin_fix_history_records():
 
     except Exception as e:
         _log.exception('admin_fix_history_records: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/recalc-pending', methods=['GET', 'POST'])
+@_require_admin
+def admin_recalc_pending():
+    """
+    GET  → dry-run: re-runs every PENDING/LIVE prediction through the shared
+           prediction function and returns a before/after comparison table.
+    POST → same but writes the new values to the DB.
+
+    Football : predict_match(home, away) + _compute_best_bet()
+    NBA/WNBA : predict_nba/predict_wnba(home, away) from nba_predict.py
+
+    NOTE: win_probability, ou_probability, best_bet_type are computed live and
+    are not stored as DB columns — they will automatically reflect the updated
+    predicted_winner when the API serves predictions.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+
+    try:
+        from nba_predict import predict_nba as _pred_nba, predict_wnba as _pred_wnba
+    except ImportError as e:
+        return jsonify({'error': f'Cannot import nba_predict: {e}'}), 500
+
+    apply = (request.method == 'POST')
+    rows  = []
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date, competition,
+                       predicted_winner, predicted_goals, predicted_btts,
+                       predicted_corners, result_status,
+                       COALESCE(sport, 'football') AS sport
+                FROM predictions
+                WHERE result_status IN ('PENDING', 'LIVE')
+                ORDER BY match_date, home_team
+            """)
+            col_names = [d[0] for d in cur.description]
+            pending = [dict(zip(col_names, r)) for r in cur.fetchall()]
+
+            for rec in pending:
+                home  = rec['home_team'] or ''
+                away  = rec['away_team'] or ''
+                sport = rec['sport']
+                mid   = rec['match_id']
+
+                before = {
+                    'predicted_winner':  rec['predicted_winner'],
+                    'predicted_goals':   rec['predicted_goals'],
+                    'predicted_btts':    rec['predicted_btts'],
+                    'predicted_corners': rec['predicted_corners'],
+                }
+                after  = dict(before)
+                err    = None
+
+                try:
+                    if sport == 'nba':
+                        pred     = _pred_nba(home, away)
+                        after['predicted_winner'] = pred.get('best_bet', '')
+                        after['predicted_goals']  = pred.get('predicted_ou', '')
+                        after['predicted_btts']   = None
+                        after['predicted_corners'] = None
+
+                    elif sport == 'wnba':
+                        pred     = _pred_wnba(home, away)
+                        after['predicted_winner'] = pred.get('best_bet', '')
+                        after['predicted_goals']  = pred.get('predicted_ou', '')
+                        after['predicted_btts']   = None
+                        after['predicted_corners'] = None
+
+                    else:  # football
+                        tip = _wc_predict(home, away, is_neutral=True)
+                        if tip is None:
+                            raise ValueError(f'predict_match returned None for {home} vs {away}')
+                        bb  = _compute_best_bet(tip)
+                        pg  = float(tip.get('over_goals', 0.5) or 0.5)
+                        bt  = float(tip.get('btts',       0.48) or 0.48)
+                        co  = float(tip.get('over_corners', 0.52) or 0.52)
+                        after['predicted_winner']  = bb.get('label', '')
+                        after['predicted_goals']   = 'Over 2.5'  if pg >= 0.5 else 'Under 2.5'
+                        after['predicted_btts']    = 'Yes'       if bt >= 0.5 else 'No'
+                        after['predicted_corners'] = 'Over 9.5'  if co >= 0.5 else 'Under 9.5'
+
+                except Exception as exc:
+                    err = str(exc)
+
+                changed = (err is None) and (after != before)
+
+                if apply and changed:
+                    cur.execute("""
+                        UPDATE predictions
+                        SET predicted_winner  = %s,
+                            predicted_goals   = %s,
+                            predicted_btts    = %s,
+                            predicted_corners = %s
+                        WHERE match_id = %s
+                          AND result_status IN ('PENDING', 'LIVE')
+                    """, (after['predicted_winner'], after['predicted_goals'],
+                          after['predicted_btts'],   after['predicted_corners'],
+                          mid))
+
+                rows.append({
+                    'match_id':   mid,
+                    'home_team':  home,
+                    'away_team':  away,
+                    'match_date': rec['match_date'],
+                    'sport':      sport,
+                    'status':     rec['result_status'],
+                    'before':     before,
+                    'after':      after,
+                    'changed':    changed,
+                    'error':      err,
+                })
+
+            if apply:
+                _BEST_BET_CACHE["data"]   = None
+                _DAILY_TIPS_CACHE["ts"]   = 0
+                _NBA_CACHE["data"]        = None
+                _WNBA_CACHE["data"]       = None
+
+            updated = sum(1 for r in rows if r['changed'])
+            errors  = sum(1 for r in rows if r['error'])
+            return jsonify({
+                'action':        'applied' if apply else 'preview',
+                'total_pending': len(pending),
+                'updated':       updated,
+                'errors':        errors,
+                'rows':          rows,
+            })
+
+    except Exception as e:
+        _log.exception('admin_recalc_pending: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

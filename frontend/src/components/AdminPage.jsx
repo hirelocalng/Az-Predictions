@@ -254,7 +254,124 @@ export default function AdminPage({ navigate }) {
         {/* DB Corrections */}
         <DbCorrections headers={headers} />
 
+        {/* Recalc Pending */}
+        <RecalcPending headers={headers} />
+
       </div>
+    </div>
+  )
+}
+
+function RecalcPending({ headers }) {
+  const [status,  setStatus]  = useState('')
+  const [result,  setResult]  = useState(null)
+  const [busy,    setBusy]    = useState(false)
+
+  const run = async (apply) => {
+    if (apply && !window.confirm(
+      'This will re-run every PENDING/LIVE match through the shared prediction function and overwrite predicted_winner / predicted_goals / predicted_btts / predicted_corners in the DB. Continue?'
+    )) return
+    setBusy(true); setStatus(''); setResult(null)
+    try {
+      const r = await fetch('/admin/recalc-pending', {
+        method: apply ? 'POST' : 'GET',
+        headers: headers(),
+      })
+      const d = await r.json()
+      setResult(d)
+      if (!r.ok) { setStatus('Error: ' + (d.error || r.status)); return }
+      setStatus(apply
+        ? `✅ Applied — ${d.updated} updated, ${d.errors} errors`
+        : `Preview — ${d.total_pending} pending, ${d.updated} would change, ${d.errors} errors`)
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  const fmtPW = v => v || '—'
+
+  return (
+    <div className="admin-card" style={{ marginTop: 20 }}>
+      <h3 style={{ marginBottom: 6, color: 'var(--amber)', fontSize: '0.95rem', fontWeight: 700 }}>
+        ♻️ Recalculate Pending Predictions
+      </h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
+        Re-runs every PENDING/LIVE match through the shared prediction function.
+        Updates <code>predicted_winner</code>, <code>predicted_goals</code>,{' '}
+        <code>predicted_btts</code>, <code>predicted_corners</code>.
+        <br />
+        <em>win_probability, ou_probability, best_bet_type are live-computed — not stored.</em>
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="admin-btn" onClick={() => run(false)} disabled={busy}>
+          Preview
+        </button>
+        <button className="admin-btn admin-btn-won" onClick={() => run(true)} disabled={busy}>
+          Apply Recalc
+        </button>
+      </div>
+      {status && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem',
+          color: status.startsWith('✅') ? 'var(--green)' : status.startsWith('Preview') ? 'var(--amber)' : 'var(--red)' }}>
+          {status}
+        </p>
+      )}
+      {result && result.rows && result.rows.length > 0 && (
+        <div style={{ marginTop: 14, overflowX: 'auto' }}>
+          <table style={{ width: '100%', fontSize: '0.72rem', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Match</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Date</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Sport</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Before Best Bet</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>After Best Bet</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Before Goals</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>After Goals</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Δ</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.rows.map((r, i) => (
+                <tr key={i} style={{
+                  background: r.error ? 'rgba(239,68,68,.08)' : r.changed ? 'rgba(16,185,129,.06)' : 'transparent',
+                }}>
+                  <td style={{ padding: '4px 8px', color: 'var(--text)' }}>
+                    {r.home_team} vs {r.away_team}
+                  </td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{r.match_date}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{r.sport}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{fmtPW(r.before.predicted_winner)}</td>
+                  <td style={{ padding: '4px 8px', color: r.changed ? 'var(--green)' : 'var(--text-muted)' }}>
+                    {r.error ? <span style={{ color: 'var(--red)' }}>ERR</span> : fmtPW(r.after.predicted_winner)}
+                  </td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{fmtPW(r.before.predicted_goals)}</td>
+                  <td style={{ padding: '4px 8px', color: r.changed ? 'var(--green)' : 'var(--text-muted)' }}>
+                    {r.error ? '—' : fmtPW(r.after.predicted_goals)}
+                  </td>
+                  <td style={{ padding: '4px 8px', textAlign: 'center' }}>
+                    {r.error ? '⚠️' : r.changed ? '✏️' : '✓'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {result.rows.some(r => r.error) && (
+            <details style={{ marginTop: 10 }}>
+              <summary style={{ fontSize: '0.75rem', color: 'var(--text-muted)', cursor: 'pointer' }}>Error details</summary>
+              <pre style={{ fontSize: '0.68rem', color: 'var(--red)', whiteSpace: 'pre-wrap', marginTop: 6 }}>
+                {result.rows.filter(r => r.error).map(r =>
+                  `${r.home_team} vs ${r.away_team}: ${r.error}`
+                ).join('\n')}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+      {result && result.rows && result.rows.length === 0 && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          No PENDING or LIVE predictions in the database.
+        </p>
+      )}
     </div>
   )
 }

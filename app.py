@@ -425,7 +425,9 @@ def _get_history():
                            predicted_btts, predicted_corners,
                            actual_home_score, actual_away_score, actual_corners,
                            result_status, kickoff_utc, created_at,
-                           COALESCE(sport, 'football') AS sport
+                           COALESCE(sport, 'football') AS sport,
+                           live_home_score, live_away_score, live_minute,
+                           COALESCE(match_status, 'SCHEDULED') AS match_status
                     FROM predictions
                     ORDER BY match_date DESC, created_at DESC
                 """)
@@ -1774,14 +1776,22 @@ def _check_pending_results():
 # ── ESPN live-score polling ───────────────────────────────────────────────────
 
 _ESPN_LIVE_LEAGUES = [
-    'fifa.world', 'fifa.friendly',
+    # FIFA World Cup 2026 (ongoing tournament)
+    'fifa.world',
+    # WC qualifying (all confederations)
+    'fifa.worldq.conmebol', 'fifa.worldq.concacaf',
+    'fifa.worldq.afc',      'fifa.worldq.caf',
+    'fifa.worldq.uefa',     'fifa.worldq.ofc',
+    # Internationals / friendlies
+    'fifa.friendly',
     'uefa.friendly', 'conmebol.friendly',
-    'concacaf.friendly',     # CONCACAF international friendlies
-    'afc.friendly',          # Asian international friendlies
-    'caf.friendly',          # African international friendlies
-    'afc.cupqualification',  # Asian World Cup Qualifying
-    'caf.nations',           # Africa Cup of Nations
+    'concacaf.friendly', 'afc.friendly', 'caf.friendly',
+    # Other international competitions
+    'afc.cupqualification',
+    'caf.nations',
     'concacaf.nations.league',
+    'conmebol.america',      # Copa América
+    'uefa.euro',             # UEFA European Championship
 ]
 
 
@@ -2752,6 +2762,94 @@ def wnba_fixtures():
             if _WNBA_CACHE["data"] is None:
                 _WNBA_CACHE["data"] = []
     return jsonify(_WNBA_CACHE["data"] or [])
+
+
+@app.route('/admin/backfill-corners', methods=['GET', 'POST'])
+@_require_admin
+def admin_backfill_corners():
+    """
+    GET  → count finished football games with actual_corners IS NULL.
+    POST → attempt to re-fetch corners for every such game, returns per-match report.
+
+    Tries TSDB first (has a per-event stats endpoint that returns corners),
+    then ESPN dated scoreboard.  Basketball games are skipped (no corners).
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date
+                FROM predictions
+                WHERE result_status IN ('WON', 'LOST')
+                  AND actual_corners IS NULL
+                  AND COALESCE(sport, 'football') NOT IN ('nba', 'wnba')
+                ORDER BY match_date DESC
+            """)
+            rows = cur.fetchall()
+            pending = [{'match_id': r[0], 'home_team': r[1],
+                        'away_team': r[2], 'match_date': str(r[3])} for r in rows]
+
+            if request.method == 'GET':
+                return jsonify({
+                    'action': 'preview — POST to run backfill',
+                    'games_missing_corners': len(pending),
+                    'sample': pending[:10],
+                })
+
+            # POST — attempt to fill each one
+            filled, failed = [], []
+            for g in pending:
+                home  = g['home_team']
+                away  = g['away_team']
+                date  = g['match_date']
+                mid   = g['match_id']
+                corners = None
+
+                # Source 1: TSDB (returns corners alongside score)
+                try:
+                    r = _fetch_tsdb_result(home, away, date)
+                    if r and r[2] is not None:
+                        corners = r[2]
+                except Exception:
+                    pass
+
+                # Source 2: ESPN dated scoreboard
+                if corners is None:
+                    try:
+                        r = _fetch_espn_result_dated(home, away, date)
+                        if r and r[2] is not None:
+                            corners = r[2]
+                    except Exception:
+                        pass
+
+                if corners is not None:
+                    cur.execute(
+                        "UPDATE predictions SET actual_corners=%s WHERE match_id=%s",
+                        (corners, mid),
+                    )
+                    filled.append({'match_id': mid, 'home_team': home,
+                                   'away_team': away, 'date': date, 'corners': corners})
+                else:
+                    failed.append({'match_id': mid, 'home_team': home,
+                                   'away_team': away, 'date': date})
+
+            return jsonify({
+                'action': 'backfill complete',
+                'total_processed': len(pending),
+                'filled':  len(filled),
+                'failed':  len(failed),
+                'filled_records': filled,
+                'failed_records': failed[:20],
+            })
+
+    except Exception as e:
+        _log.exception('admin_backfill_corners: %s', e)
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/admin/fix-history-records', methods=['GET', 'POST'])

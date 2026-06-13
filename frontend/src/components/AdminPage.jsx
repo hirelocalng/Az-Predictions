@@ -257,6 +257,9 @@ export default function AdminPage({ navigate }) {
         {/* Recalc Pending */}
         <RecalcPending headers={headers} />
 
+        {/* Backfill Corners */}
+        <BackfillCorners headers={headers} />
+
       </div>
     </div>
   )
@@ -371,6 +374,101 @@ function RecalcPending({ headers }) {
         <p style={{ marginTop: 10, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           No PENDING or LIVE predictions in the database.
         </p>
+      )}
+    </div>
+  )
+}
+
+function BackfillCorners({ headers }) {
+  const [status,  setStatus]  = useState('')
+  const [result,  setResult]  = useState(null)
+  const [busy,    setBusy]    = useState(false)
+
+  const run = async (apply) => {
+    if (apply && !window.confirm(
+      'This will attempt to fetch missing corner data for all finished football games. Continue?'
+    )) return
+    setBusy(true); setStatus(''); setResult(null)
+    try {
+      const r = await fetch('/admin/backfill-corners', {
+        method: apply ? 'POST' : 'GET',
+        headers: headers(),
+      })
+      const d = await r.json()
+      setResult(d)
+      if (!r.ok) { setStatus('Error: ' + (d.error || r.status)); return }
+      if (apply) {
+        setStatus(`✅ Done — ${d.filled} filled, ${d.failed} failed, ${d.skipped} skipped`)
+      } else {
+        setStatus(`Preview — ${d.missing_count} games missing corner data`)
+      }
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  return (
+    <div className="admin-card" style={{ marginTop: 20 }}>
+      <h3 style={{ marginBottom: 6, color: 'var(--amber)', fontSize: '0.95rem', fontWeight: 700 }}>
+        📐 Backfill Corner Data
+      </h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
+        Finds finished football games with missing <code>actual_corners</code> and fetches them
+        from TheSportsDB + ESPN. Run Preview first to see how many need filling.
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="admin-btn" onClick={() => run(false)} disabled={busy}>
+          Preview
+        </button>
+        <button className="admin-btn admin-btn-won" onClick={() => run(true)} disabled={busy}>
+          Apply Backfill
+        </button>
+      </div>
+      {busy && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem', color: 'var(--amber)' }}>
+          Fetching corner data from external APIs…
+        </p>
+      )}
+      {status && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem',
+          color: status.startsWith('✅') ? 'var(--green)'
+               : status.startsWith('Preview') ? 'var(--amber)' : 'var(--red)' }}>
+          {status}
+        </p>
+      )}
+      {result && result.rows && result.rows.length > 0 && (
+        <div style={{ marginTop: 14, overflowX: 'auto' }}>
+          <table style={{ width: '100%', fontSize: '0.72rem', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Match</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Date</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Corners</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.rows.map((r, i) => (
+                <tr key={i} style={{
+                  background: r.status === 'filled' ? 'rgba(16,185,129,.06)'
+                            : r.status === 'failed'  ? 'rgba(239,68,68,.08)' : 'transparent',
+                }}>
+                  <td style={{ padding: '4px 8px', color: 'var(--text)' }}>
+                    {r.home_team} vs {r.away_team}
+                  </td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{r.match_date}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--green)' }}>
+                    {r.corners != null ? r.corners : '—'}
+                  </td>
+                  <td style={{ padding: '4px 8px' }}>
+                    {r.status === 'filled' ? '✅ Filled'
+                     : r.status === 'failed' ? <span style={{ color: 'var(--red)' }}>❌ Not found</span>
+                     : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

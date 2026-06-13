@@ -55,7 +55,7 @@ export default function DailyTipsSection() {
 
       {error && (
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
-          Could not load today's fixtures — make sure the Flask server is running on port 5000.
+          Could not load today's fixtures — please try again shortly.
         </p>
       )}
 

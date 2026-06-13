@@ -213,7 +213,7 @@ def _compute_nba_form(games, team_id):
 
     n10 = min(10, len(games))
     w10  = wins[:n10];  pf10 = pts_f[:n10];  pa10 = pts_a[:n10]
-    rest = max(1, (pd.Timestamp.utcnow() - last_date).days) if last_date else 3
+    rest = max(1, (pd.Timestamp.now('UTC') - last_date).days) if last_date else 3
     return {
         'win_rate_l10':     float(np.mean(w10)),
         'avg_pts_l10':      float(np.mean(pf10)),

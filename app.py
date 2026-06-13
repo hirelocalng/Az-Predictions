@@ -1859,6 +1859,37 @@ _ESPN_DONE = frozenset({
 })
 
 
+_ESPN_CORNER_KEYS = frozenset({'cornerkicks', 'corners', 'corner kicks', 'corner'})
+
+
+def _espn_extract_corners(comp, hc, ac):
+    """
+    ESPN stores corner counts in competitors[i].statistics (per-team) for
+    dated/historical scoreboard calls — NOT in competitions[0].statistics.
+    Sum both sides; fall back to the competition-level statistics block.
+    """
+    total = None
+    for side in (hc, ac):
+        for stat in (side.get('statistics') or []):
+            name = (stat.get('name') or stat.get('abbreviation') or '').lower().strip()
+            if name in _ESPN_CORNER_KEYS:
+                try:
+                    total = (total or 0) + int(
+                        stat.get('displayValue') or stat.get('value') or '0'
+                    )
+                except (ValueError, TypeError):
+                    pass
+    if total is None:
+        for stat in (comp.get('statistics') or []):
+            if (stat.get('name') or '').lower().strip() in _ESPN_CORNER_KEYS:
+                try:
+                    total = int(stat.get('displayValue') or '0')
+                except (ValueError, TypeError):
+                    pass
+                break
+    return total
+
+
 def _fetch_espn_result_dated(home_team, away_team, match_date):
     """Like _fetch_espn_result but queries ESPN with a specific date — catches past-day results."""
     import requests as _req
@@ -1883,14 +1914,7 @@ def _fetch_espn_result_dated(home_team, away_team, match_date):
                 an  = (ac.get('team', {}).get('displayName') or '').strip()
                 hs  = int(hc.get('score') or 0)
                 as_ = int(ac.get('score') or 0)
-                corners = None
-                for stat in (comp.get('statistics') or []):
-                    if stat.get('name', '').lower() in ('cornerkicks', 'corners', 'corner kicks'):
-                        try:
-                            corners = int(stat.get('displayValue') or '0')
-                        except (ValueError, TypeError):
-                            pass
-                        break
+                corners = _espn_extract_corners(comp, hc, ac)
                 if _team_similar(hn, home_team) and _team_similar(an, away_team):
                     return hs, as_, corners
                 if _team_similar(hn, away_team) and _team_similar(an, home_team):
@@ -2797,12 +2821,14 @@ def admin_backfill_corners():
             if request.method == 'GET':
                 return jsonify({
                     'action': 'preview — POST to run backfill',
+                    'missing_count': len(pending),
                     'games_missing_corners': len(pending),
                     'sample': pending[:10],
                 })
 
             # POST — attempt to fill each one
-            filled, failed = [], []
+            rows_out = []
+            filled_n = failed_n = 0
             for g in pending:
                 home  = g['home_team']
                 away  = g['away_team']
@@ -2812,18 +2838,18 @@ def admin_backfill_corners():
 
                 # Source 1: TSDB (returns corners alongside score)
                 try:
-                    r = _fetch_tsdb_result(home, away, date)
-                    if r and r[2] is not None:
-                        corners = r[2]
+                    _r = _fetch_tsdb_result(home, away, date)
+                    if _r and _r[2] is not None:
+                        corners = _r[2]
                 except Exception:
                     pass
 
                 # Source 2: ESPN dated scoreboard
                 if corners is None:
                     try:
-                        r = _fetch_espn_result_dated(home, away, date)
-                        if r and r[2] is not None:
-                            corners = r[2]
+                        _r = _fetch_espn_result_dated(home, away, date)
+                        if _r and _r[2] is not None:
+                            corners = _r[2]
                     except Exception:
                         pass
 
@@ -2832,19 +2858,23 @@ def admin_backfill_corners():
                         "UPDATE predictions SET actual_corners=%s WHERE match_id=%s",
                         (corners, mid),
                     )
-                    filled.append({'match_id': mid, 'home_team': home,
-                                   'away_team': away, 'date': date, 'corners': corners})
+                    filled_n += 1
+                    rows_out.append({'home_team': home, 'away_team': away,
+                                     'match_date': date, 'corners': corners,
+                                     'status': 'filled'})
                 else:
-                    failed.append({'match_id': mid, 'home_team': home,
-                                   'away_team': away, 'date': date})
+                    failed_n += 1
+                    rows_out.append({'home_team': home, 'away_team': away,
+                                     'match_date': date, 'corners': None,
+                                     'status': 'failed'})
 
             return jsonify({
                 'action': 'backfill complete',
                 'total_processed': len(pending),
-                'filled':  len(filled),
-                'failed':  len(failed),
-                'filled_records': filled,
-                'failed_records': failed[:20],
+                'filled':  filled_n,
+                'failed':  failed_n,
+                'skipped': 0,
+                'rows':    rows_out,
             })
 
     except Exception as e:

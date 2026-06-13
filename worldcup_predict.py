@@ -512,8 +512,22 @@ def predict(team_a_raw, team_b_raw, is_neutral=True, tournament='FIFA World Cup'
     print('  MARKET SUMMARY')
     print(f'  Match Result  -> {winner} ({top_prob:.1%})')
     print(f'  Goals O/U 2.5 -> {goals_call} ({max(p_over, p_under):.1%})')
-    print(f'  Both Teams Score -> {p_btts:.1%}')
+    btts_call = 'BTTS Yes' if p_btts >= 0.5 else 'BTTS No'
+    print(f'  Both Teams Score -> {btts_call} ({max(p_btts, 1-p_btts):.1%})')
     print(f'  Corners O/U 9.5  -> {corners_call} ({max(p_corners, 1-p_corners):.1%})')
+
+    # Best bet across ALL markets — same logic as _compute_best_bet() in app.py
+    # so the terminal output matches what the website saves and displays.
+    all_market_candidates = [
+        (p_home_win,                    f'{team_a} to Win'),
+        (p_draw,                        'Draw'),
+        (p_away_win,                    f'{team_b} to Win'),
+        (max(p_over, p_under),          goals_call + ' Goals'),
+        (max(p_btts, 1 - p_btts),      btts_call),
+        (max(p_corners, 1 - p_corners), corners_call + ' Corners'),
+    ]
+    best_all_prob, best_all_label = max(all_market_candidates, key=lambda x: x[0])
+    print(f'\n  ★ BEST BET (website pick) → {best_all_label}  ({best_all_prob:.1%})')
     print(f'{sep}\n')
 
 

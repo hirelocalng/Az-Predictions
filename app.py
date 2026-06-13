@@ -345,7 +345,11 @@ def _save_basketball_prediction(game, pred, sport):
                          competition, predicted_winner, predicted_goals,
                          result_status, kickoff_utc, sport)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s)
-                    ON CONFLICT (match_id) DO NOTHING
+                    ON CONFLICT (match_id) DO UPDATE
+                        SET predicted_winner = EXCLUDED.predicted_winner,
+                            predicted_goals  = EXCLUDED.predicted_goals,
+                            kickoff_utc      = EXCLUDED.kickoff_utc
+                        WHERE predictions.result_status = 'PENDING'
                 """, (mid, home, away, date, time_, comp, pw, pg, kickoff, sport))
                 return
     except Exception as e:
@@ -2764,43 +2768,67 @@ def admin_fix_history_records():
             paraguay_list = rows_to_list(paraguay_rows)
             jun_list      = rows_to_list(jun_rows)
 
+            # GSV @ Seattle Storm — broad search, any date
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date, competition,
+                       predicted_winner, actual_home_score, actual_away_score, result_status
+                FROM predictions
+                WHERE (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+                   OR (LOWER(home_team) LIKE %s AND LOWER(away_team) LIKE %s)
+            """, ('%valkyries%', '%storm%', '%storm%', '%valkyries%'))
+            gsv_rows = cur.fetchall()
+            gsv_list = rows_to_list(gsv_rows)
+
             if request.method == 'GET':
                 return jsonify({
                     'action': 'diagnostic — POST to apply fixes',
                     'mystics_records':   mystics_list,
                     'paraguay_records':  paraguay_list,
+                    'gsv_records':       gsv_list,
                     'jun10_15_records':  jun_list,
                 })
 
             # ── POST: apply fixes ─────────────────────────────────────────────
             applied = []
 
-            # Mystics fix
-            for r in mystics_list:
-                cur.execute("""
-                    UPDATE predictions
-                    SET predicted_winner = %s, result_status = %s, match_status = 'FINISHED'
-                    WHERE match_id = %s
-                """, ('Over 170.5', 'WON', r['match_id']))
-                applied.append({'fixed': 'mystics', 'match_id': r['match_id'],
-                                'predicted_winner': 'Over 170.5', 'result_status': 'WON'})
-
-            # Paraguay fix — use whatever match_id was found by the broad search
-            if paraguay_list:
-                for r in paraguay_list:
+            def _apply_fix(records, new_pw, label):
+                """Update predicted_winner; re-derive result_status from actual scores."""
+                for r in records:
+                    hs  = r['actual_home_score']
+                    as_ = r['actual_away_score']
+                    if hs is not None and as_ is not None:
+                        new_rs = _resolve_result(new_pw, r['home_team'], r['away_team'], hs, as_)
+                    else:
+                        new_rs = r['result_status']  # can't re-evaluate without scores
                     cur.execute("""
                         UPDATE predictions
                         SET predicted_winner = %s, result_status = %s, match_status = 'FINISHED'
                         WHERE match_id = %s
-                    """, ('Over 2.5 Goals', 'WON', r['match_id']))
-                    applied.append({'fixed': 'paraguay', 'match_id': r['match_id'],
-                                    'before_predicted_winner': r['predicted_winner'],
-                                    'before_result_status':    r['result_status'],
-                                    'predicted_winner': 'Over 2.5 Goals',
-                                    'result_status': 'WON'})
+                    """, (new_pw, new_rs, r['match_id']))
+                    applied.append({
+                        'fixed': label, 'match_id': r['match_id'],
+                        'before': {'predicted_winner': r['predicted_winner'],
+                                   'result_status':    r['result_status']},
+                        'after':  {'predicted_winner': new_pw, 'result_status': new_rs},
+                        'score':  f"{hs}-{as_}" if hs is not None else 'unknown',
+                    })
+
+            # Mystics — O/U Over 170.5 was the correct best bet
+            _apply_fix(mystics_list, 'Over 170.5', 'mystics')
+
+            # Paraguay — Goals Over 2.5 was the correct best bet
+            if paraguay_list:
+                _apply_fix(paraguay_list, 'Over 2.5 Goals', 'paraguay')
             else:
                 applied.append({'fixed': 'paraguay', 'found': False,
-                                'note': 'No Paraguay record found — check diagnostic GET first'})
+                                'note': 'No Paraguay record — check diagnostic GET'})
+
+            # GSV @ Seattle Storm — Under 170.5 matches terminal output
+            if gsv_list:
+                _apply_fix(gsv_list, 'Under 170.5', 'gsv_storm')
+            else:
+                applied.append({'fixed': 'gsv_storm', 'found': False,
+                                'note': 'No GSV/Storm record found'})
 
             _BEST_BET_CACHE["data"] = None
             _DAILY_TIPS_CACHE["ts"] = 0

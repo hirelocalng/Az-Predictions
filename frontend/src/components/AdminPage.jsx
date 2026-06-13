@@ -293,7 +293,7 @@ function DbCorrections({ headers }) {
         🔧 DB Corrections
       </h3>
       <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
-        Fix mis-classified prediction records (Washington Mystics vs Toronto Tempo &amp; USA vs Paraguay).
+        Fix mis-classified prediction records (Washington Mystics vs Toronto Tempo, USA vs Paraguay, GSV vs Seattle Storm).
       </p>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         <button className="admin-btn" onClick={preview} disabled={busy}>

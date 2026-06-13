@@ -1,6 +1,6 @@
-/* AZ Prediction — Service Worker v2 */
+/* AZ Prediction — Service Worker v3 */
 
-const CACHE = 'az-predict-v2';
+const CACHE = 'az-predict-v3';
 
 // Pre-cache the app shell (hashed Vite assets are cached at runtime below)
 const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
@@ -43,7 +43,10 @@ self.addEventListener('fetch', event => {
       fetch(request)
         .then(response => {
           if (response.ok) {
-            caches.open(CACHE).then(c => c.put(request, response.clone()));
+            // Clone SYNCHRONOUSLY before returning the original — calling clone()
+            // inside caches.open().then() would be too late (body already consumed).
+            const copy = response.clone();
+            caches.open(CACHE).then(c => c.put(request, copy));
           }
           return response;
         })
@@ -59,7 +62,8 @@ self.addEventListener('fetch', event => {
         if (cached) return cached;
         return fetch(request).then(response => {
           if (response.ok) {
-            caches.open(CACHE).then(c => c.put(request, response.clone()));
+            const copy = response.clone();
+            caches.open(CACHE).then(c => c.put(request, copy));
           }
           return response;
         });
@@ -73,7 +77,8 @@ self.addEventListener('fetch', event => {
     fetch(request)
       .then(response => {
         if (response.ok) {
-          caches.open(CACHE).then(c => c.put(request, response.clone()));
+          const copy = response.clone();
+          caches.open(CACHE).then(c => c.put(request, copy));
         }
         return response;
       })

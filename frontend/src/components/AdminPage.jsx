@@ -251,7 +251,68 @@ export default function AdminPage({ navigate }) {
           </div>
         ))}
 
+        {/* DB Corrections */}
+        <DbCorrections headers={headers} />
+
       </div>
+    </div>
+  )
+}
+
+function DbCorrections({ headers }) {
+  const [status, setStatus] = useState('')
+  const [records, setRecords] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const preview = async () => {
+    setBusy(true); setStatus(''); setRecords(null)
+    try {
+      const r = await fetch('/admin/fix-history-records', { headers: headers() })
+      const d = await r.json()
+      setRecords(d.records || [])
+      setStatus(r.ok ? 'preview' : 'Error: ' + (d.error || r.status))
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  const apply = async () => {
+    if (!window.confirm('Apply DB corrections? This will update predicted_winner and result_status for the targeted records.')) return
+    setBusy(true); setStatus('')
+    try {
+      const r = await fetch('/admin/fix-history-records', { method: 'POST', headers: headers() })
+      const d = await r.json()
+      setRecords(d.records || [])
+      setStatus(r.ok ? '✅ Corrections applied' : 'Error: ' + (d.error || r.status))
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  return (
+    <div className="admin-card" style={{ marginTop: 20 }}>
+      <h3 style={{ marginBottom: 14, color: 'var(--amber)', fontSize: '0.95rem', fontWeight: 700 }}>
+        🔧 DB Corrections
+      </h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
+        Fix mis-classified prediction records (Washington Mystics vs Toronto Tempo &amp; USA vs Paraguay).
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="admin-btn" onClick={preview} disabled={busy}>
+          Preview
+        </button>
+        <button className="admin-btn admin-btn-won" onClick={apply} disabled={busy}>
+          Apply Fixes
+        </button>
+      </div>
+      {status && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem', color: status.startsWith('✅') ? 'var(--green)' : 'var(--red)' }}>
+          {status}
+        </p>
+      )}
+      {records && (
+        <pre style={{ marginTop: 10, fontSize: '0.72rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+          {JSON.stringify(records, null, 2)}
+        </pre>
+      )}
     </div>
   )
 }

@@ -1820,15 +1820,7 @@ def _fetch_espn_events():
                 hs  = int(hc.get('score') or 0)
                 as_ = int(ac.get('score') or 0)
                 minute = (comp.get('status') or {}).get('displayClock', '')
-                # Extract total corners from statistics if available
-                corners = None
-                for stat in (comp.get('statistics') or []):
-                    if stat.get('name', '').lower() in ('cornerkicks', 'corners', 'corner kicks'):
-                        try:
-                            corners = int(stat.get('displayValue') or '0')
-                        except (ValueError, TypeError):
-                            pass
-                        break
+                corners = _espn_extract_corners(comp, hc, ac)
                 found[(hn.lower(), an.lower())] = {
                     'home': hn, 'away': an,
                     'home_score': hs, 'away_score': as_,
@@ -1859,7 +1851,7 @@ _ESPN_DONE = frozenset({
 })
 
 
-_ESPN_CORNER_KEYS = frozenset({'cornerkicks', 'corners', 'corner kicks', 'corner'})
+_ESPN_CORNER_KEYS = frozenset({'cornerkicks', 'corners', 'corner kicks', 'corner', 'woncorners'})
 
 
 def _espn_extract_corners(comp, hc, ac):

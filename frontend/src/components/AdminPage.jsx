@@ -263,6 +263,9 @@ export default function AdminPage({ navigate }) {
         {/* Deduplicate */}
         <DeduplicatePanel headers={headers} />
 
+        {/* Audit + Re-resolve */}
+        <AuditPanel headers={headers} />
+
       </div>
     </div>
   )
@@ -564,6 +567,180 @@ function BackfillCorners({ headers }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AuditPanel({ headers }) {
+  const [audit,   setAudit]   = useState(null)
+  const [rr,      setRr]      = useState(null)
+  const [status,  setStatus]  = useState('')
+  const [busy,    setBusy]    = useState(false)
+
+  const runAudit = async () => {
+    setBusy(true); setStatus(''); setAudit(null)
+    try {
+      const r = await fetch('/admin/audit-history', { headers: headers() })
+      const d = await r.json()
+      if (!r.ok) { setStatus('Error: ' + (d.error || r.status)); setBusy(false); return }
+      setAudit(d)
+      setStatus(`Audit: ${d.total_won_lost} WON/LOST, ${d.stale_pending} stale PENDING, ${d.remaining_dups} duplicate pairs`)
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  const runResolve = async () => {
+    if (!window.confirm('Re-fetch ESPN results for all past-date PENDING records and update scores + status?')) return
+    setBusy(true); setStatus(''); setRr(null)
+    try {
+      const r = await fetch('/admin/re-resolve-stale', { method: 'POST', headers: headers() })
+      const d = await r.json()
+      if (!r.ok) { setStatus('Error: ' + (d.error || r.status)); setBusy(false); return }
+      setRr(d)
+      setStatus(`✅ Re-resolved ${d.resolved} records, ${d.failed} not found`)
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  const cell = s => ({ padding: '4px 8px', color: s || 'var(--text-muted)', borderBottom: '1px solid rgba(255,255,255,.04)' })
+
+  return (
+    <div className="admin-card" style={{ marginTop: 20 }}>
+      <h3 style={{ marginBottom: 6, color: 'var(--amber)', fontSize: '0.95rem', fontWeight: 700 }}>
+        🔍 History Audit &amp; Re-resolve
+      </h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
+        Audit shows all WON/LOST records, stale PENDING matches, remaining duplicates, and
+        live bet-outcome totals so you can spot rogue or missing records.
+        Re-resolve fetches ESPN results for every past-date PENDING football match.
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="admin-btn" onClick={runAudit} disabled={busy}>Run Audit</button>
+        <button className="admin-btn admin-btn-won" onClick={runResolve} disabled={busy}>
+          Re-resolve Stale PENDING
+        </button>
+      </div>
+      {status && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem',
+          color: status.startsWith('✅') ? 'var(--green)' : 'var(--amber)' }}>
+          {status}
+        </p>
+      )}
+
+      {audit && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 12 }}>
+            {Object.entries(audit.status_counts || {}).map(([k,v]) => (
+              <div key={k} style={{ background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
+                <div style={{ fontSize: '1.2rem', fontWeight: 800, color: k==='WON'?'var(--green)':k==='LOST'?'var(--red)':'var(--amber)' }}>{v}</div>
+                <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{k}</div>
+              </div>
+            ))}
+            <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--green)' }}>{audit.bet_outcomes_won}/{audit.bet_outcomes_total}</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Outcomes Won/Total</div>
+            </div>
+            <div style={{ background: 'rgba(255,255,255,.04)', borderRadius: 8, padding: '8px 16px', textAlign: 'center' }}>
+              <div style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--green)' }}>{audit.win_rate}%</div>
+              <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Win Rate</div>
+            </div>
+          </div>
+
+          {audit.stale_pending > 0 && (
+            <details style={{ marginBottom: 12 }}>
+              <summary style={{ fontSize: '0.8rem', color: 'var(--amber)', cursor: 'pointer' }}>
+                ⚠️ {audit.stale_pending} stale PENDING records (past-date, unresolved)
+              </summary>
+              <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse', marginTop: 8 }}>
+                <thead><tr style={{ color: 'var(--text-muted)' }}>
+                  <th style={cell()}>Match</th><th style={cell()}>Date</th>
+                  <th style={cell()}>Sport</th><th style={cell()}>Best Bet</th>
+                </tr></thead>
+                <tbody>
+                  {audit.stale_pending_records.map((r,i) => (
+                    <tr key={i}>
+                      <td style={cell('var(--text)')}>{r.home_team} vs {r.away_team}</td>
+                      <td style={cell()}>{r.match_date}</td>
+                      <td style={cell()}>{r.sport}</td>
+                      <td style={cell()}>{r.predicted_winner}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+
+          {audit.remaining_dups > 0 && (
+            <p style={{ fontSize: '0.8rem', color: 'var(--red)' }}>
+              ⚠️ {audit.remaining_dups} duplicate pair(s) still in DB — run Deduplicate again.
+            </p>
+          )}
+
+          <details>
+            <summary style={{ fontSize: '0.8rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+              All {audit.total_won_lost} WON/LOST records
+            </summary>
+            <table style={{ width: '100%', fontSize: '0.68rem', borderCollapse: 'collapse', marginTop: 8 }}>
+              <thead><tr style={{ color: 'var(--text-muted)' }}>
+                <th style={cell()}>Match</th><th style={cell()}>Date</th>
+                <th style={cell()}>Status</th><th style={cell()}>Score</th>
+                <th style={cell()}>Corners</th><th style={cell()}>Best Bet</th>
+              </tr></thead>
+              <tbody>
+                {audit.won_lost_records.map((r,i) => (
+                  <tr key={i} style={{ background: r.result_status==='WON'?'rgba(16,185,129,.04)':'transparent' }}>
+                    <td style={cell('var(--text)')}>{r.home_team} vs {r.away_team}</td>
+                    <td style={cell()}>{r.match_date}</td>
+                    <td style={{ padding:'4px 8px', color: r.result_status==='WON'?'var(--green)':'var(--red)' }}>{r.result_status}</td>
+                    <td style={cell()}>{r.actual_home_score != null ? `${r.actual_home_score}–${r.actual_away_score}` : '—'}</td>
+                    <td style={cell()}>{r.actual_corners ?? '—'}</td>
+                    <td style={cell()}>{r.predicted_winner}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </div>
+      )}
+
+      {rr && (
+        <div style={{ marginTop: 14 }}>
+          <p style={{ fontSize: '0.8rem', color: 'var(--green)', marginBottom: 8 }}>
+            ✅ Resolved {rr.resolved} · Failed {rr.failed}
+          </p>
+          {rr.resolved_records.length > 0 && (
+            <table style={{ width: '100%', fontSize: '0.7rem', borderCollapse: 'collapse' }}>
+              <thead><tr style={{ color: 'var(--text-muted)' }}>
+                <th style={cell()}>Match</th><th style={cell()}>Date</th>
+                <th style={cell()}>Score</th><th style={cell()}>Corners</th><th style={cell()}>Status</th>
+              </tr></thead>
+              <tbody>
+                {rr.resolved_records.map((r,i) => (
+                  <tr key={i}>
+                    <td style={cell('var(--text)')}>{r.teams}</td>
+                    <td style={cell()}>{r.date}</td>
+                    <td style={cell()}>{r.score}</td>
+                    <td style={cell()}>{r.corners ?? '—'}</td>
+                    <td style={{ padding:'4px 8px', color: r.status==='WON'?'var(--green)':'var(--red)' }}>{r.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {rr.failed_records.length > 0 && (
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ fontSize: '0.75rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
+                {rr.failed} not found
+              </summary>
+              <ul style={{ fontSize: '0.7rem', color: 'var(--text-muted)', paddingLeft: 16, marginTop: 6 }}>
+                {rr.failed_records.map((r,i) => (
+                  <li key={i}>{r.teams} ({r.date}) — {r.reason}</li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
     </div>

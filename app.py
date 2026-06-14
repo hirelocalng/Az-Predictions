@@ -439,38 +439,7 @@ def _get_history():
                         row['saved_at'] = row['created_at'].isoformat()
                     row.pop('created_at', None)
                     rows.append(row)
-                # In-memory dedup: if the same home+away appear with dates ≤2 days apart
-                # (UTC midnight-crossover duplicates), keep the most-complete row.
-                from datetime import date as _date_t, timedelta as _td_t
-                seen: dict = {}
-                deduped = []
-                for row in rows:
-                    key = (row.get('home_team','').lower().strip(),
-                           row.get('away_team','').lower().strip())
-                    if key not in seen:
-                        seen[key] = row
-                        deduped.append(row)
-                    else:
-                        existing = seen[key]
-                        try:
-                            d1 = _date_t.fromisoformat(str(existing.get('match_date','')))
-                            d2 = _date_t.fromisoformat(str(row.get('match_date','')))
-                            if abs((d1 - d2).days) > 2:
-                                # genuinely different fixtures (later stage); show both
-                                seen[key] = row
-                                deduped.append(row)
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-                        # Same fixture — keep whichever is more complete
-                        e_score = existing.get('actual_home_score') is not None
-                        r_score = row.get('actual_home_score') is not None
-                        e_corn  = existing.get('actual_corners') is not None
-                        r_corn  = row.get('actual_corners') is not None
-                        if (r_score and not e_score) or (r_corn and not e_corn and e_score == r_score):
-                            deduped[-1] = row  # replace last appended with better row
-                            seen[key]   = row
-                return {'predictions': deduped}
+                return {'predictions': rows}
     except Exception as e:
         _log.warning('DB get_history failed: %s', e)
     with _HISTORY_LOCK:
@@ -3036,6 +3005,179 @@ def admin_deduplicate():
             })
     except Exception as e:
         _log.exception('admin_deduplicate: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/audit-history')
+@_require_admin
+def admin_audit_history():
+    """
+    Diagnostic: show all prediction records, status breakdown, past-date PENDING,
+    and per-outcome bet counts so the user can spot rogue or missing records.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            # Status breakdown
+            cur.execute("""
+                SELECT result_status, COUNT(*) FROM predictions
+                GROUP BY result_status ORDER BY result_status
+            """)
+            status_counts = {r[0]: r[1] for r in cur.fetchall()}
+
+            # All WON/LOST records (ordered newest first)
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date,
+                       competition, predicted_winner, actual_home_score,
+                       actual_away_score, actual_corners, result_status,
+                       COALESCE(sport,'football') AS sport, created_at
+                FROM predictions
+                WHERE result_status IN ('WON','LOST')
+                ORDER BY match_date DESC, created_at DESC
+            """)
+            cols = [d[0] for d in cur.description]
+            won_lost = [dict(zip(cols, r)) for r in cur.fetchall()]
+            for row in won_lost:
+                row['created_at'] = str(row.get('created_at',''))
+                row['match_date']  = str(row.get('match_date',''))
+
+            # Past-date PENDING records (finished but not resolved — likely wrongly PENDING)
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date,
+                       competition, predicted_winner, result_status,
+                       COALESCE(sport,'football') AS sport, created_at
+                FROM predictions
+                WHERE result_status IN ('PENDING','LIVE')
+                  AND match_date < CURRENT_DATE - INTERVAL '1 day'
+                ORDER BY match_date DESC
+            """)
+            cols2 = [d[0] for d in cur.description]
+            stale_pending = [dict(zip(cols2, r)) for r in cur.fetchall()]
+            for row in stale_pending:
+                row['created_at'] = str(row.get('created_at',''))
+                row['match_date']  = str(row.get('match_date',''))
+
+            # Duplicates still remaining
+            cur.execute("""
+                SELECT p1.match_id AS id1, p2.match_id AS id2,
+                       p1.home_team, p1.away_team,
+                       p1.match_date AS date1, p2.match_date AS date2,
+                       p1.result_status AS status1, p2.result_status AS status2
+                FROM predictions p1
+                JOIN predictions p2
+                  ON LOWER(p1.home_team) = LOWER(p2.home_team)
+                 AND LOWER(p1.away_team) = LOWER(p2.away_team)
+                 AND p1.match_id < p2.match_id
+                 AND ABS(p1.match_date - p2.match_date) <= 2
+                ORDER BY p1.home_team
+            """)
+            cols3 = [d[0] for d in cur.description]
+            remaining_dups = [dict(zip(cols3, r)) for r in cur.fetchall()]
+            for row in remaining_dups:
+                row['date1'] = str(row.get('date1',''))
+                row['date2'] = str(row.get('date2',''))
+
+            # Total bets (per-outcome count, same logic as /api/results)
+            total_outcomes = won_outcomes = 0
+            for rec in won_lost:
+                pw = rec.get('predicted_winner','')
+                hs = rec.get('actual_home_score')
+                as_ = rec.get('actual_away_score')
+                ac  = rec.get('actual_corners')
+                sport = rec.get('sport','football')
+                if hs is None:
+                    continue
+                # Count outcomes that would appear in sub_results
+                sub = _sub_results(rec)
+                for v in sub.values():
+                    if v in ('WON','LOST'):
+                        total_outcomes += 1
+                        if v == 'WON':
+                            won_outcomes += 1
+
+            return jsonify({
+                'status_counts':    status_counts,
+                'total_won_lost':   len(won_lost),
+                'stale_pending':    len(stale_pending),
+                'remaining_dups':   len(remaining_dups),
+                'bet_outcomes_total': total_outcomes,
+                'bet_outcomes_won':   won_outcomes,
+                'win_rate': round(won_outcomes / total_outcomes * 100, 1) if total_outcomes else 0.0,
+                'won_lost_records':   won_lost,
+                'stale_pending_records': stale_pending,
+                'remaining_dup_pairs':   remaining_dups,
+            })
+    except Exception as e:
+        _log.exception('admin_audit_history: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/re-resolve-stale', methods=['POST'])
+@_require_admin
+def admin_re_resolve_stale():
+    """
+    Re-fetch results for all past-date PENDING football records using ESPN -1 day retry.
+    Updates actual_home_score, actual_away_score, actual_corners, result_status.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date, predicted_winner,
+                       COALESCE(sport,'football') AS sport
+                FROM predictions
+                WHERE result_status IN ('PENDING','LIVE')
+                  AND match_date < CURRENT_DATE - INTERVAL '1 day'
+                ORDER BY match_date DESC
+            """)
+            rows = cur.fetchall()
+
+            resolved = []
+            failed   = []
+            for mid, home, away, match_date, pw, sport in rows:
+                if sport in ('nba','wnba'):
+                    failed.append({'match_id': mid, 'teams': f'{home} vs {away}',
+                                   'reason': 'basketball — use basketball checker'})
+                    continue
+                # Try ESPN (with -1 day retry built in)
+                r = _fetch_espn_result_dated(home, away, str(match_date))
+                if r is None:
+                    # Also try TSDB
+                    r = _fetch_tsdb_result(home, away, str(match_date))
+                if r is None:
+                    failed.append({'match_id': mid, 'teams': f'{home} vs {away}',
+                                   'date': str(match_date), 'reason': 'not found'})
+                    continue
+                hs, as_, corners = r
+                status = _resolve_result(pw or '', home, away, hs, as_,
+                                         actual_corners=corners)
+                cur.execute("""
+                    UPDATE predictions
+                    SET actual_home_score=%s, actual_away_score=%s,
+                        actual_corners=%s, result_status=%s, match_status='FINISHED'
+                    WHERE match_id=%s
+                """, (hs, as_, corners, status, mid))
+                resolved.append({'match_id': mid, 'teams': f'{home} vs {away}',
+                                 'date': str(match_date),
+                                 'score': f'{hs}–{as_}', 'corners': corners,
+                                 'status': status})
+
+            return jsonify({
+                'resolved': len(resolved),
+                'failed':   len(failed),
+                'resolved_records': resolved,
+                'failed_records':   failed,
+            })
+    except Exception as e:
+        _log.exception('admin_re_resolve_stale: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

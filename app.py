@@ -2954,7 +2954,7 @@ def admin_deduplicate():
                   ON LOWER(p1.home_team) = LOWER(p2.home_team)
                  AND LOWER(p1.away_team) = LOWER(p2.away_team)
                  AND p1.match_id < p2.match_id
-                 AND ABS(p1.match_date - p2.match_date) <= 2
+                 AND ABS(p1.match_date::date - p2.match_date::date) <= 2
                 ORDER BY p1.home_team, p1.away_team, p1.match_date
             """)
             cols = [d[0] for d in cur.description]
@@ -3052,7 +3052,7 @@ def admin_audit_history():
                        COALESCE(sport,'football') AS sport, created_at
                 FROM predictions
                 WHERE result_status IN ('PENDING','LIVE')
-                  AND match_date < CURRENT_DATE - INTERVAL '1 day'
+                  AND match_date::date < CURRENT_DATE - INTERVAL '1 day'
                 ORDER BY match_date DESC
             """)
             cols2 = [d[0] for d in cur.description]
@@ -3072,7 +3072,7 @@ def admin_audit_history():
                   ON LOWER(p1.home_team) = LOWER(p2.home_team)
                  AND LOWER(p1.away_team) = LOWER(p2.away_team)
                  AND p1.match_id < p2.match_id
-                 AND ABS(p1.match_date - p2.match_date) <= 2
+                 AND ABS(p1.match_date::date - p2.match_date::date) <= 2
                 ORDER BY p1.home_team
             """)
             cols3 = [d[0] for d in cur.description]
@@ -3135,7 +3135,7 @@ def admin_re_resolve_stale():
                        COALESCE(sport,'football') AS sport
                 FROM predictions
                 WHERE result_status IN ('PENDING','LIVE')
-                  AND match_date < CURRENT_DATE - INTERVAL '1 day'
+                  AND match_date::date < CURRENT_DATE - INTERVAL '1 day'
                 ORDER BY match_date DESC
             """)
             rows = cur.fetchall()

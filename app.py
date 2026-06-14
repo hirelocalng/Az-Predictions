@@ -1474,6 +1474,12 @@ def _resolve_result(pw, home, away, hs, as_, actual_corners=None):
             return 'WON' if (over and actual_corners > thresh) or (not over and actual_corners <= thresh) else 'LOST'
         return 'LOST'
 
+    # BTTS (Both Teams To Score) — "BTTS Yes" or "BTTS No"
+    if 'btts' in pw_l:
+        predicted_yes = 'yes' in pw_l
+        actual_btts = hs > 0 and as_ > 0
+        return 'WON' if predicted_yes == actual_btts else 'LOST'
+
     # Basketball / generic Over/Under (e.g. "Over 220.5", "Under 170.5")
     if 'over' in pw_l or 'under' in pw_l:
         over   = 'over' in pw_l
@@ -1721,7 +1727,8 @@ def _check_pending_results():
                     if result is None:
                         continue
                     hs, as_, corners = result
-                    status  = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                    status  = _resolve_result(pw or '', home or '', away or '', hs, as_,
+                                              actual_corners=corners)
                     cur.execute("""
                         UPDATE predictions
                         SET actual_home_score=%s, actual_away_score=%s,
@@ -1770,7 +1777,8 @@ def _check_pending_results():
                 pred['actual_corners'] = corners
             pred['result_status'] = _resolve_result(
                 pred.get('predicted_winner', ''),
-                pred['home_team'], pred['away_team'], hs, as_)
+                pred['home_team'], pred['away_team'], hs, as_,
+                actual_corners=corners)
             changed = True
             _log.info('JSON result: %s %d-%d %s → %s (corners=%s)',
                       pred['home_team'], hs, as_, pred['away_team'],
@@ -1994,8 +2002,9 @@ def _update_live_scores():
                         hs, as_ = ev['home_score'], ev['away_score']
                         minute  = ev.get('minute', '')
                         if ev['espn_status'] in _ESPN_DONE:
-                            status  = _resolve_result(pw or '', home or '', away or '', hs, as_)
                             corners = ev.get('corners')
+                            status  = _resolve_result(pw or '', home or '', away or '', hs, as_,
+                                                      actual_corners=corners)
                             cur.execute("""
                                 UPDATE predictions
                                 SET actual_home_score=%s, actual_away_score=%s,
@@ -2028,7 +2037,8 @@ def _update_live_scores():
                         result = _get_result(home or '', away or '', match_date or '')
                         if result:
                             hs, as_, corners = result
-                            status = _resolve_result(pw or '', home or '', away or '', hs, as_)
+                            status = _resolve_result(pw or '', home or '', away or '', hs, as_,
+                                                     actual_corners=corners)
                             cur.execute("""
                                 UPDATE predictions
                                 SET actual_home_score=%s, actual_away_score=%s,
@@ -3306,6 +3316,83 @@ def admin_fix_history_records():
 
     except Exception as e:
         _log.exception('admin_fix_history_records: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/rederive-statuses', methods=['GET', 'POST'])
+@_require_admin
+def admin_rederive_statuses():
+    """
+    GET  → dry-run: re-derives result_status for every WON/LOST record using
+           corrected _resolve_result logic (BTTS branch + corners). Lists mismatches.
+    POST → applies all corrections.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cur.execute("""
+                SELECT match_id, home_team, away_team, match_date,
+                       predicted_winner, actual_home_score, actual_away_score,
+                       actual_corners, result_status
+                FROM predictions
+                WHERE result_status IN ('WON', 'LOST')
+                  AND actual_home_score IS NOT NULL
+                  AND actual_away_score IS NOT NULL
+                ORDER BY match_date DESC
+            """)
+            rows = cur.fetchall()
+
+            mismatches = []
+            checked = 0
+            for mid, home, away, match_date, pw, hs, as_, corners, curr_status in rows:
+                checked += 1
+                computed = _resolve_result(pw or '', home or '', away or '', hs, as_,
+                                           actual_corners=corners)
+                if computed != curr_status:
+                    mismatches.append({
+                        'match_id':   mid,
+                        'teams':      f'{home} vs {away}',
+                        'match_date': str(match_date),
+                        'best_bet':   pw,
+                        'score':      f'{hs}–{as_}',
+                        'corners':    corners,
+                        'was':        curr_status,
+                        'should_be':  computed,
+                    })
+
+            if request.method == 'GET':
+                return jsonify({
+                    'checked':    checked,
+                    'mismatches': len(mismatches),
+                    'records':    mismatches,
+                })
+
+            # POST: apply fixes
+            fixed = 0
+            for m in mismatches:
+                cur.execute("""
+                    UPDATE predictions SET result_status = %s
+                    WHERE match_id = %s
+                """, (m['should_be'], m['match_id']))
+                fixed += 1
+
+            _BEST_BET_CACHE["data"] = None
+            _DAILY_TIPS_CACHE["ts"] = 0
+
+            return jsonify({
+                'action':  'fixes applied',
+                'checked': checked,
+                'fixed':   fixed,
+                'records': mismatches,
+            })
+
+    except Exception as e:
+        _log.exception('admin_rederive_statuses: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

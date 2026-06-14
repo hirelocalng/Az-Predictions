@@ -266,6 +266,9 @@ export default function AdminPage({ navigate }) {
         {/* Audit + Re-resolve */}
         <AuditPanel headers={headers} />
 
+        {/* Re-derive WON/LOST statuses */}
+        <RederivePanel headers={headers} />
+
       </div>
     </div>
   )
@@ -742,6 +745,102 @@ function AuditPanel({ headers }) {
             </details>
           )}
         </div>
+      )}
+    </div>
+  )
+}
+
+function RederivePanel({ headers }) {
+  const [status,  setStatus]  = useState('')
+  const [result,  setResult]  = useState(null)
+  const [busy,    setBusy]    = useState(false)
+
+  const run = async (apply) => {
+    if (apply && !window.confirm(
+      `Apply fixes to ${result?.mismatches ?? '?'} mismatched record(s)? This updates result_status in the DB.`
+    )) return
+    setBusy(true); setStatus(''); if (!apply) setResult(null)
+    try {
+      const r = await fetch('/admin/rederive-statuses', {
+        method: apply ? 'POST' : 'GET',
+        headers: headers(),
+      })
+      const d = await r.json()
+      setResult(d)
+      if (!r.ok) { setStatus('Error: ' + (d.error || r.status)); setBusy(false); return }
+      setStatus(apply
+        ? `✅ Fixed ${d.fixed} record(s) out of ${d.checked} checked`
+        : `Preview — ${d.mismatches} mismatch(es) out of ${d.checked} records`)
+    } catch { setStatus('Connection error') }
+    setBusy(false)
+  }
+
+  const statusColor = s =>
+    s === 'WON' ? 'var(--green)' : s === 'LOST' ? 'var(--red)' : 'var(--text-muted)'
+
+  return (
+    <div className="admin-card" style={{ marginTop: 20 }}>
+      <h3 style={{ marginBottom: 6, color: 'var(--amber)', fontSize: '0.95rem', fontWeight: 700 }}>
+        ✏️ Re-derive WON/LOST Statuses
+      </h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', marginBottom: 14 }}>
+        Re-computes the correct <code>result_status</code> for every finished record using the
+        updated logic (BTTS branch + corner O/U with actual corner data). Preview first to see
+        mismatches, then apply.
+      </p>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+        <button className="admin-btn" onClick={() => run(false)} disabled={busy}>
+          Preview Mismatches
+        </button>
+        <button
+          className="admin-btn admin-btn-won"
+          onClick={() => run(true)}
+          disabled={busy || !result || result.mismatches === 0}
+        >
+          Apply Fixes
+        </button>
+      </div>
+      {status && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem',
+          color: status.startsWith('✅') ? 'var(--green)'
+               : status.startsWith('Preview') ? 'var(--amber)' : 'var(--red)' }}>
+          {status}
+        </p>
+      )}
+      {result && result.records && result.records.length > 0 && (
+        <div style={{ marginTop: 14, overflowX: 'auto' }}>
+          <table style={{ width: '100%', fontSize: '0.72rem', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Match</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Date</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Best Bet</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Score</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Corners</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Was</th>
+                <th style={{ padding: '4px 8px', borderBottom: '1px solid var(--border)' }}>Should Be</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.records.map((r, i) => (
+                <tr key={i} style={{ background: i % 2 === 0 ? 'rgba(255,255,255,.03)' : 'transparent' }}>
+                  <td style={{ padding: '4px 8px', color: 'var(--text)' }}>{r.teams}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{r.match_date}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{r.best_bet}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{r.score}</td>
+                  <td style={{ padding: '4px 8px', color: 'var(--text-muted)' }}>{r.corners ?? '—'}</td>
+                  <td style={{ padding: '4px 8px', color: statusColor(r.was), fontWeight: 700 }}>{r.was}</td>
+                  <td style={{ padding: '4px 8px', color: statusColor(r.should_be), fontWeight: 700 }}>{r.should_be}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {result && result.mismatches === 0 && (
+        <p style={{ marginTop: 10, fontSize: '0.82rem', color: 'var(--green)' }}>
+          ✅ All {result.checked} records have correct statuses — no fixes needed.
+        </p>
       )}
     </div>
   )

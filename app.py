@@ -3747,12 +3747,29 @@ def health():
                     db_msg = 'connected'
         except Exception as e:
             db_msg = str(e)
+    import os as _os
+    def _pkl_info(path, obj):
+        try:
+            sz = round(_os.path.getsize(path) / 1024)
+            mtime = datetime.fromtimestamp(_os.path.getmtime(path), tz=timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+            return {'loaded': obj is not None, 'size_kb': sz, 'mtime': mtime}
+        except Exception:
+            return {'loaded': obj is not None}
     return jsonify({
         'status':       'ok',
         'db':           db_ok,
         'db_msg':       db_msg,
         'db_url_set':   bool(_DB_CONN_URL),
         'korapay_set':  bool(_KORAPAY_PUBLIC),
+        'models': {
+            'club_result':  _pkl_info(os.path.join(_BASE_DIR, 'result_model.pkl'),       club_result),
+            'club_goals':   _pkl_info(os.path.join(_BASE_DIR, 'goals_model.pkl'),        club_goals),
+            'club_corners': _pkl_info(os.path.join(_BASE_DIR, 'corners_model.pkl'),      club_corners),
+            'nba_result':   _pkl_info(os.path.join(_BASE_DIR, 'nba_result_model.pkl'),   True),
+            'nba_ou':       _pkl_info(os.path.join(_BASE_DIR, 'nba_ou_model.pkl'),       True),
+            'wnba_result':  _pkl_info(os.path.join(_BASE_DIR, 'wnba_result_model.pkl'),  True),
+            'wnba_ou':      _pkl_info(os.path.join(_BASE_DIR, 'wnba_ou_model.pkl'),      True),
+        },
     })
 
 

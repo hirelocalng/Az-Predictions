@@ -1,0 +1,42 @@
+name: Weekly Data Refresh
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # Every Monday at 03:00 UTC
+  workflow_dispatch:        # Allow manual trigger from GitHub UI
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run weekly refresh
+        run: python refresh_weekly.py
+
+      - name: Commit updated caches
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/nba_supplement_2023_2026.csv \
+                  data/nba_team_form_cache.csv \
+                  data/club_form_cache.csv
+          git diff --cached --quiet && echo "No changes to commit" || \
+            git commit -m "Weekly refresh $(date -u +%Y-%m-%d): update form caches and NBA supplement"
+
+      - name: Push changes
+        run: git push origin main

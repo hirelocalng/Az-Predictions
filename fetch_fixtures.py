@@ -145,6 +145,23 @@ _DEFAULT_STATS = {
     "win": 0.33, "draw": 0.27, "hwn": 0.40, "awn": 0.25,
 }
 
+# Pre-computed form cache (from train.py _build_form_cache).
+# Used as fallback when data/Matches.csv is not present on Railway.
+_CLUB_FORM_CACHE: dict = {}
+try:
+    import os as _os
+    _fc_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                             "data", "club_form_cache.csv")
+    if _os.path.exists(_fc_path):
+        import pandas as _pd_fc
+        _fc = _pd_fc.read_csv(_fc_path)
+        _CLUB_FORM_CACHE = _fc.set_index("team")[
+            ["gf", "ga", "sot", "corners", "win", "draw", "hwn", "awn"]
+        ].to_dict("index")
+        del _pd_fc, _fc, _fc_path, _os
+except Exception:
+    pass
+
 
 def _load_history(league_code: str) -> pd.DataFrame:
     if league_code in _hist_cache:
@@ -213,6 +230,8 @@ def _rolling(df: pd.DataFrame, team: str, n: int = 5) -> dict:
     mask   = (df["home"] == team) | (df["away"] == team)
     recent = df[mask].sort_values("date").tail(n)
     if recent.empty:
+        if team in _CLUB_FORM_CACHE:
+            return dict(_CLUB_FORM_CACHE[team])
         return dict(_DEFAULT_STATS)
 
     gf = ga = sot_s = sot_n = cor_s = cor_n = 0.0

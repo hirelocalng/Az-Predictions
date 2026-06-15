@@ -2,8 +2,9 @@
 nba_train.py — Train NBA and WNBA XGBoost prediction models.
 
 NBA  : game table from data/nba.sqlite  (~65 k games 2000-2023)
-WNBA : data/WNBA_BoxScore-1997-2020/Data/1997-2020_officialBoxScore.csv
-       (5 391 rows — one row per game from away-team perspective)
+WNBA : data/wnba_player_and_team_stats_2003-2025  (player-level ESPN data;
+       aggregated to game level here, covering 2003-2025 regular season + playoffs)
+       Falls back to data/WNBA_BoxScore-1997-2020/... if v2 path missing.
 
 Outputs
 -------
@@ -25,14 +26,28 @@ warnings.filterwarnings('ignore')
 # ─── Paths & constants ────────────────────────────────────────────────────────
 NBA_DB           = 'data/nba.sqlite'
 WNBA_BS_PATH     = 'data/WNBA_BoxScore-1997-2020/Data/1997-2020_officialBoxScore.csv'
+WNBA_V2_PATH     = 'data/wnba_player_and_team_stats_2003-2025'
 NBA_RESULT_PATH  = 'nba_result_model.pkl'
 NBA_OU_PATH      = 'nba_ou_model.pkl'
 WNBA_RESULT_PATH = 'wnba_result_model.pkl'
 WNBA_OU_PATH     = 'wnba_ou_model.pkl'
 
 NBA_OU_LINE   = 220.5
-WNBA_OU_LINE  = 170.5
+WNBA_OU_LINE  = 155.5  # updated: median total is ~156; 170.5 was only 23% over
 FORM_N        = 10
+
+# Normalise ESPN abbreviations in v2 data → canonical abbrs used in nba_predict.py
+_ABBR_NORM = {
+    'CONN': 'CON',  # Connecticut Sun (ESPN used CONN in 2021-2024)
+    'LA':   'LAS',  # Los Angeles Sparks
+    'LV':   'LVA',  # Las Vegas Aces
+    'NY':   'NYL',  # New York Liberty
+    'PHX':  'PHO',  # Phoenix Mercury
+    'WSH':  'WAS',  # Washington Mystics
+    'GS':   'GSV',  # Golden State Valkyries (2025 expansion)
+}
+# All-Star / exhibition pseudo-team codes to exclude from training
+_EXHIBITION = {'CLA', 'COL', 'USA', 'WNBASTARS', 'STE', 'WIL', 'ALL'}
 MIN_YEAR_NBA  = 2000
 TEST_SPLIT    = 0.20
 
@@ -104,7 +119,7 @@ def _h2h_rate(df, home_col, away_col, home_win_col, date_col):
 
 
 def _train_models(X_tr, y_tr, X_te, y_te, label, weights=None):
-    print(f"\n  GridSearchCV — {label} …")
+    print(f"\n  GridSearchCV - {label} ...")
     gs = GridSearchCV(
         XGBClassifier(objective='binary:logistic', eval_metric='logloss',
                       random_state=42, n_jobs=-1),
@@ -121,7 +136,10 @@ def _train_models(X_tr, y_tr, X_te, y_te, label, weights=None):
 
 # ─── NBA ──────────────────────────────────────────────────────────────────────
 
+NBA_SUPPLEMENT_PATH = 'data/nba_supplement_2023_2026.csv'
+
 def load_nba():
+    import os
     conn = sqlite3.connect(NBA_DB)
     df = pd.read_sql_query("""
         SELECT game_id, game_date, season_id,
@@ -137,7 +155,28 @@ def load_nba():
     """, conn, parse_dates=['game_date'])
     conn.close()
     df = df[df['game_date'].dt.year >= MIN_YEAR_NBA].sort_values('game_date').reset_index(drop=True)
-    print(f"  Loaded {len(df):,} NBA games  ({df['game_date'].min().date()} – {df['game_date'].max().date()})")
+    print(f"  SQLite: {len(df):,} NBA games  ({df['game_date'].min().date()} to {df['game_date'].max().date()})")
+
+    # Append supplement (2023-24, 2024-25, 2025-26) if available
+    if os.path.exists(NBA_SUPPLEMENT_PATH):
+        sup = pd.read_csv(NBA_SUPPLEMENT_PATH, parse_dates=['game_date'])
+        sup = sup[sup['pts_home'].notna() & sup['pts_away'].notna() & sup['wl_home'].notna()]
+        # Drop any dates already in SQLite to avoid duplicates
+        cutoff = df['game_date'].max()
+        sup = sup[sup['game_date'] > cutoff].copy()
+        if len(sup) > 0:
+            # Align columns
+            sup['season_id'] = sup['season_id'].astype(str)
+            df['season_id']  = df['season_id'].astype(str)
+            df = pd.concat([df, sup[df.columns]], ignore_index=True)
+            df = df.sort_values('game_date').reset_index(drop=True)
+            print(f"  +supplement: {len(sup):,} games  ({sup['game_date'].min().date()} to {sup['game_date'].max().date()})")
+        else:
+            print(f"  Supplement found but all dates already in SQLite.")
+    else:
+        print(f"  NOTE: {NBA_SUPPLEMENT_PATH} not found -- run fetch_nba_supplement.py to add 2023-2026 data")
+
+    print(f"  Combined: {len(df):,} NBA games  ({df['game_date'].min().date()} to {df['game_date'].max().date()})")
     return df
 
 
@@ -205,12 +244,12 @@ def build_nba_features(df):
 
 def train_nba():
     print("\n" + "="*60)
-    print("NBA MODEL TRAINING")
+    print("NBA MODEL TRAINING  (SQLite + 2023-2026 supplement)")
     print("="*60)
-    print("Loading data …")
+    print("Loading data ...")
     df = load_nba()
 
-    print("Building features …")
+    print("Building features ...")
     feat = build_nba_features(df)
 
     feat['_hw'] = (feat['wl_home'] == 'W').astype(float)
@@ -229,24 +268,64 @@ def train_nba():
     split = int(len(feat) * (1 - TEST_SPLIT))
     tr, te = feat.iloc[:split], feat.iloc[split:]
     print(f"  Train: {len(tr):,}  Test: {len(te):,}  "
-          f"({te['game_date'].min().date()} – {te['game_date'].max().date()})")
+          f"({te['game_date'].min().date()} to {te['game_date'].max().date()})")
 
     X_tr, X_te = tr[NBA_FEATURES].values, te[NBA_FEATURES].values
     w = 0.5 + 0.5 * np.arange(len(tr)) / len(tr)
 
+    # --- Backtest: evaluate OLD model on same test period -------------------
+    print("\n--- BACKTEST: old model vs new model on held-out test set ---")
+    old_res_acc = old_ou_acc = None
+    try:
+        with open(NBA_RESULT_PATH, 'rb') as f:
+            old_res_data = pickle.load(f)
+        with open(NBA_OU_PATH, 'rb') as f:
+            old_ou_data  = pickle.load(f)
+        old_res_pred = old_res_data['model'].predict(X_te)
+        old_ou_pred  = old_ou_data['model'].predict(X_te)
+        old_res_acc  = accuracy_score(te['target_result'].values, old_res_pred)
+        old_ou_acc   = accuracy_score(te['target_ou'].values,     old_ou_pred)
+        print(f"  Old model - result: {old_res_acc:.1%}   O/U: {old_ou_acc:.1%}"
+              f"  (trained to 2023, tested {te['game_date'].min().date()} to {te['game_date'].max().date()})")
+    except Exception as e:
+        print(f"  Could not load old models for backtest: {e}")
+
+    # --- Train new models ---------------------------------------------------
+    print()
     res_model = _train_models(X_tr, tr['target_result'].values,
                                X_te, te['target_result'].values, 'NBA result', w)
     ou_model  = _train_models(X_tr, tr['target_ou'].values,
                                X_te, te['target_ou'].values, 'NBA O/U', w)
 
-    with open(NBA_RESULT_PATH, 'wb') as f:
-        pickle.dump({'model': res_model, 'features': NBA_FEATURES, 'ou_line': None}, f)
-    with open(NBA_OU_PATH, 'wb') as f:
-        pickle.dump({'model': ou_model, 'features': NBA_FEATURES, 'ou_line': NBA_OU_LINE}, f)
-    print(f"\n  Saved: {NBA_RESULT_PATH}, {NBA_OU_PATH}")
+    new_res_acc = accuracy_score(te['target_result'].values, res_model.predict(X_te))
+    new_ou_acc  = accuracy_score(te['target_ou'].values,     ou_model.predict(X_te))
 
-    # Save team form lookup for prediction time
-    _save_nba_team_form(df)
+    # --- Decision: deploy only if new >= old --------------------------------
+    print("\n--- DEPLOYMENT DECISION ---")
+    print(f"  Result model - old: {f'{old_res_acc:.1%}' if old_res_acc is not None else 'N/A'}"
+          f"   new: {new_res_acc:.1%}")
+    print(f"  O/U model    - old: {f'{old_ou_acc:.1%}' if old_ou_acc is not None else 'N/A'}"
+          f"   new: {new_ou_acc:.1%}")
+
+    deploy_res = (old_res_acc is None) or (new_res_acc >= old_res_acc)
+    deploy_ou  = (old_ou_acc  is None) or (new_ou_acc  >= old_ou_acc)
+
+    if deploy_res and deploy_ou:
+        print("  [DEPLOY] New models equal-or-better on both metrics -- DEPLOYING")
+        with open(NBA_RESULT_PATH, 'wb') as f:
+            pickle.dump({'model': res_model, 'features': NBA_FEATURES, 'ou_line': None}, f)
+        with open(NBA_OU_PATH, 'wb') as f:
+            pickle.dump({'model': ou_model, 'features': NBA_FEATURES, 'ou_line': NBA_OU_LINE}, f)
+        print(f"  Saved: {NBA_RESULT_PATH}, {NBA_OU_PATH}")
+        _save_nba_team_form(df)
+    else:
+        reasons = []
+        if not deploy_res:
+            reasons.append(f"result regressed ({old_res_acc:.1%} -> {new_res_acc:.1%})")
+        if not deploy_ou:
+            reasons.append(f"O/U regressed ({old_ou_acc:.1%} -> {new_ou_acc:.1%})")
+        print(f"  [SKIP] NOT deploying -- {'; '.join(reasons)}")
+        print("    Old model files left unchanged.")
 
 
 def _save_nba_team_form(df):
@@ -280,8 +359,115 @@ def load_wnba():
     bs['gmDate'] = pd.to_datetime(bs['gmDate'])
     bs = bs.dropna(subset=['teamPTS','opptPTS','teamOrtg','teamDrtg']).copy()
     bs = bs.sort_values('gmDate').reset_index(drop=True)
-    print(f"  Loaded {len(bs):,} WNBA rows  ({bs['gmDate'].min().date()} – {bs['gmDate'].max().date()})")
+    print(f"  Loaded {len(bs):,} WNBA rows  ({bs['gmDate'].min().date()} to {bs['gmDate'].max().date()})")
     return bs
+
+
+def load_wnba_v2():
+    """
+    Build WNBA game-level data from the ESPN player-level dataset (2003-2025).
+    Aggregates ~23 player rows per team-game into one row per game (away perspective),
+    matching the schema expected by build_wnba_features() and build_wnba_long_form().
+
+    Abbreviation normalization aligns ESPN's abbreviated codes to the canonical set
+    used in nba_predict.WNBA_NAME_TO_ABBR so the rebuilt form cache is look-up compatible.
+    """
+    import os
+    if not os.path.exists(WNBA_V2_PATH):
+        print(f"  WARNING: {WNBA_V2_PATH} not found -- falling back to legacy boxscore")
+        return load_wnba()
+
+    df = pd.read_csv(WNBA_V2_PATH, low_memory=False)
+    df['game_date'] = pd.to_datetime(df['game_date'], errors='coerce')
+    df = df.dropna(subset=['game_date', 'team_score', 'opponent_team_score'])
+
+    # Keep regular season (2) and playoffs (3) only; drop All-Star / exhibition rows
+    df = df[df['season_type'].isin([2, 3])].copy()
+    df = df[~df['team_abbreviation'].isin(_EXHIBITION) &
+            ~df['opponent_team_abbreviation'].isin(_EXHIBITION)].copy()
+
+    # Standardise abbreviations → canonical form used in nba_predict.py
+    df['team_abbreviation']          = df['team_abbreviation'].map(
+        lambda a: _ABBR_NORM.get(a, a))
+    df['opponent_team_abbreviation'] = df['opponent_team_abbreviation'].map(
+        lambda a: _ABBR_NORM.get(a, a))
+
+    # ── Aggregate player rows → one row per (game_id, team) ──────────────────
+    tg = df.groupby(['game_id', 'team_abbreviation'], sort=False).agg(
+        game_date  = ('game_date',                  'first'),
+        season     = ('season',                     'first'),
+        home_away  = ('home_away',                  'first'),
+        team_score = ('team_score',                 'first'),
+        opp_score  = ('opponent_team_score',        'first'),
+        team_winner= ('team_winner',                'first'),
+        opp_abbr   = ('opponent_team_abbreviation', 'first'),
+        fga        = ('field_goals_attempted',      'sum'),
+        oreb       = ('offensive_rebounds',         'sum'),
+        tov        = ('turnovers',                  'sum'),
+        fta        = ('free_throws_attempted',      'sum'),
+    ).reset_index()
+
+    # ── Offensive rating (pts per 100 estimated possessions) ─────────────────
+    poss = (tg['fga'] - tg['oreb'] + tg['tov'] + 0.44 * tg['fta']).clip(lower=1)
+    tg['ortg'] = (tg['team_score'] / poss * 100).clip(60, 160)
+
+    # Defensive rating = opponent's offensive rating for the same game
+    ortg_lookup = tg.set_index(['game_id', 'team_abbreviation'])['ortg'].to_dict()
+    tg['drtg'] = [ortg_lookup.get((gid, opp), np.nan)
+                  for gid, opp in zip(tg['game_id'], tg['opp_abbr'])]
+
+    # ── Rest days and cumulative season W/L (shift-1, no leakage) ────────────
+    tg = tg.sort_values(['team_abbreviation', 'game_date']).reset_index(drop=True)
+    tg['prev_date'] = tg.groupby('team_abbreviation')['game_date'].transform(
+        lambda x: x.shift(1))
+    tg['dayOff'] = (tg['game_date'] - tg['prev_date']).dt.days.clip(1, 10).fillna(5)
+
+    tg['win'] = tg['team_winner'].astype(float)
+    sg = tg.groupby(['team_abbreviation', 'season'])
+    tg['s_wins']   = sg['win'].transform(lambda x: x.shift(1).cumsum().fillna(0))
+    tg['s_losses'] = sg['win'].transform(lambda x: (1.0 - x).shift(1).cumsum().fillna(0))
+
+    # ── Split into away (main rows) and home (oppt* columns) ─────────────────
+    away = tg[tg['home_away'] == 'away'].copy()
+    home = tg[tg['home_away'] == 'home'].copy()
+
+    away = away.rename(columns={
+        'team_abbreviation': 'teamAbbr',
+        'opp_abbr':          'opptAbbr',
+        'team_score':        'teamPTS',
+        'opp_score':         'opptPTS',
+        'ortg':              'teamOrtg',
+        'drtg':              'teamDrtg',
+        'dayOff':            'teamDayOff',
+        's_wins':            'teamWins',
+        's_losses':          'teamLosses',
+        'game_date':         'gmDate',
+    })
+    away['teamRslt'] = np.where(away['team_winner'], 'Win', 'Loss')
+
+    home_stats = home.set_index('game_id')[
+        ['ortg', 'drtg', 'dayOff', 's_wins', 's_losses']
+    ].rename(columns={
+        'ortg':     'opptOrtg',
+        'drtg':     'opptDrtg',
+        'dayOff':   'opptDayOff',
+        's_wins':   'opptWins',
+        's_losses': 'opptLosses',
+    })
+
+    away = away.set_index('game_id').join(home_stats, how='left').reset_index()
+    away.rename(columns={'index': 'game_id'}, inplace=True, errors='ignore')
+
+    keep = ['game_id', 'gmDate', 'season', 'teamAbbr', 'opptAbbr',
+            'teamPTS', 'opptPTS', 'teamRslt', 'teamOrtg', 'teamDrtg',
+            'teamDayOff', 'teamWins', 'teamLosses',
+            'opptOrtg', 'opptDrtg', 'opptDayOff', 'opptWins', 'opptLosses']
+    away = away[[c for c in keep if c in away.columns]]
+    away = away.dropna(subset=['teamPTS', 'opptPTS']).sort_values('gmDate').reset_index(drop=True)
+
+    print(f"  Loaded {len(away):,} WNBA games (v2, 2003-2025)  "
+          f"({away['gmDate'].min().date()} – {away['gmDate'].max().date()})")
+    return away
 
 
 def build_wnba_features(bs):
@@ -367,12 +553,13 @@ def build_wnba_features(bs):
 
 def train_wnba():
     print("\n" + "="*60)
-    print("WNBA MODEL TRAINING")
+    print("WNBA MODEL TRAINING  (v2 data: 2003-2025)")
     print("="*60)
-    print("Loading data …")
-    bs = load_wnba()
 
-    print("Building features …")
+    print("Loading data ...")
+    bs = load_wnba_v2()
+
+    print("Building features ...")
     feat = build_wnba_features(bs)
 
     feat['target_result'] = feat['home_win'].astype(int)
@@ -392,21 +579,63 @@ def train_wnba():
     X_tr, X_te = tr[WNBA_FEATURES].values, te[WNBA_FEATURES].values
     w = 0.5 + 0.5 * np.arange(len(tr)) / len(tr)
 
+    # --- Backtest: evaluate OLD model on same test period -------------------
+    print("\n--- BACKTEST: old model vs new model on held-out test set ---")
+    old_res_acc = old_ou_acc = None
+    try:
+        with open(WNBA_RESULT_PATH, 'rb') as f:
+            old_res_data = pickle.load(f)
+        with open(WNBA_OU_PATH, 'rb') as f:
+            old_ou_data  = pickle.load(f)
+        old_res_pred = old_res_data['model'].predict(X_te)
+        old_ou_pred  = old_ou_data['model'].predict(X_te)
+        old_res_acc  = accuracy_score(te['target_result'].values, old_res_pred)
+        old_ou_acc   = accuracy_score(te['target_ou'].values,     old_ou_pred)
+        print(f"  Old model  - result: {old_res_acc:.1%}   O/U: {old_ou_acc:.1%}"
+              f"  (trained on 1997-2020 data, tested on {te['gmDate'].min().date()} to {te['gmDate'].max().date()})")
+    except Exception as e:
+        print(f"  Could not load old models for backtest: {e}")
+
+    # --- Train new models ---------------------------------------------------
+    print()
     res_model = _train_models(X_tr, tr['target_result'].values,
                                X_te, te['target_result'].values, 'WNBA result', w)
     ou_model  = _train_models(X_tr, tr['target_ou'].values,
                                X_te, te['target_ou'].values, 'WNBA O/U', w)
 
-    with open(WNBA_RESULT_PATH, 'wb') as f:
-        pickle.dump({'model': res_model, 'features': WNBA_FEATURES, 'ou_line': None}, f)
-    with open(WNBA_OU_PATH, 'wb') as f:
-        pickle.dump({'model': ou_model, 'features': WNBA_FEATURES, 'ou_line': WNBA_OU_LINE}, f)
-    print(f"\n  Saved: {WNBA_RESULT_PATH}, {WNBA_OU_PATH}")
+    new_res_acc = accuracy_score(te['target_result'].values, res_model.predict(X_te))
+    new_ou_acc  = accuracy_score(te['target_ou'].values,     ou_model.predict(X_te))
 
-    # Save WNBA team form cache
-    tg_all = build_wnba_long_form(bs)
-    tg_all.groupby('team').tail(FORM_N * 2).to_csv('data/wnba_team_form_cache.csv', index=False)
-    print("  Saved team form cache -> data/wnba_team_form_cache.csv")
+    # --- Decision: deploy only if new >= old --------------------------------
+    print("\n--- DEPLOYMENT DECISION ---")
+    print(f"  Result model  - old: {f'{old_res_acc:.1%}' if old_res_acc is not None else 'N/A'}"
+          f"   new: {new_res_acc:.1%}")
+    print(f"  O/U model     - old: {f'{old_ou_acc:.1%}' if old_ou_acc is not None else 'N/A'}"
+          f"   new: {new_ou_acc:.1%}")
+
+    deploy_res = (old_res_acc is None) or (new_res_acc >= old_res_acc)
+    deploy_ou  = (old_ou_acc  is None) or (new_ou_acc  >= old_ou_acc)
+
+    if deploy_res and deploy_ou:
+        print("  [DEPLOY] New models equal-or-better on both metrics -- DEPLOYING")
+        with open(WNBA_RESULT_PATH, 'wb') as f:
+            pickle.dump({'model': res_model, 'features': WNBA_FEATURES, 'ou_line': None}, f)
+        with open(WNBA_OU_PATH, 'wb') as f:
+            pickle.dump({'model': ou_model, 'features': WNBA_FEATURES, 'ou_line': WNBA_OU_LINE}, f)
+        print(f"  Saved: {WNBA_RESULT_PATH}, {WNBA_OU_PATH}")
+
+        # Rebuild team form cache from new data
+        tg_all = build_wnba_long_form(bs)
+        tg_all.groupby('team').tail(FORM_N * 2).to_csv('data/wnba_team_form_cache.csv', index=False)
+        print("  Saved team form cache -> data/wnba_team_form_cache.csv")
+    else:
+        reasons = []
+        if not deploy_res:
+            reasons.append(f"result model regressed ({old_res_acc:.1%} -> {new_res_acc:.1%})")
+        if not deploy_ou:
+            reasons.append(f"O/U model regressed ({old_ou_acc:.1%} -> {new_ou_acc:.1%})")
+        print(f"  [SKIP] NOT deploying -- {'; '.join(reasons)}")
+        print("    Old model files left unchanged.")
 
 
 def build_wnba_long_form(bs):

@@ -2,10 +2,10 @@
 Football match prediction training script (v5).
 
 Data sources:
-  - Matches.csv          : 230 k rows, 38 leagues, 2000-2025 (primary)
-  - data/brazil_2025.csv : FBref Série A 2025 (new, no overlap with Matches.csv)
+  - Matches.csv          : 244 k rows, 38 leagues, 2000-2026 (primary)
+  - data/brazil_2025.csv : FBref Serie A 2025 (new, no overlap with Matches.csv)
   - data/argentina_2025.csv : FBref Liga Profesional 2025 (new)
-  Note: brazil_2024.csv is skipped — fully covered by Matches.csv BRA division.
+  Note: brazil_2024.csv is skipped -- fully covered by Matches.csv BRA division.
 
 Key features:
   - Normalised implied probabilities from betting odds (imp_h/d/a)
@@ -29,7 +29,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.model_selection import RandomizedSearchCV
 from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
@@ -302,17 +302,15 @@ def compute_rolling_stats(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 # Model training with hyperparameter tuning
 # ---------------------------------------------------------------------------
 
-def train_model(X: np.ndarray, y: np.ndarray, label: str,
-                multiclass: bool = False) -> tuple:
+def _tune_and_fit(X_tr: np.ndarray, y_tr: np.ndarray,
+                  X_te: np.ndarray, y_te: np.ndarray,
+                  label: str, multiclass: bool = False):
     """
-    RandomizedSearchCV on a 40k-row sample → retrain best params on full set.
+    RandomizedSearchCV on a 40k-row subsample of X_tr, then refit on full X_tr.
+    Returns (fitted_model, test_accuracy).
     """
-    # Replace any stray inf (e.g. from 1/0 edge cases in odds) with NaN
-    X = np.where(np.isinf(X), np.nan, X)
-
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    X_tr = np.where(np.isinf(X_tr), np.nan, X_tr)
+    X_te = np.where(np.isinf(X_te), np.nan, X_te)
 
     param_dist = {
         "n_estimators":     [300, 500, 700, 1000, 1500],
@@ -328,42 +326,34 @@ def train_model(X: np.ndarray, y: np.ndarray, label: str,
 
     eval_metric = "mlogloss" if multiclass else "logloss"
     base_clf = XGBClassifier(
-        eval_metric=eval_metric,
-        random_state=42,
-        verbosity=0,
-        tree_method="hist",
+        eval_metric=eval_metric, random_state=42, verbosity=0, tree_method="hist",
     )
 
     sample_size = min(len(X_tr), 40_000)
     rng = np.random.RandomState(42)
     idx = rng.choice(len(X_tr), sample_size, replace=False)
 
-    print(f"  Tuning on {sample_size:,} samples  ({TUNE_ITER} iters × 3-fold CV) …")
+    print(f"  Tuning {label}: {sample_size:,} samples ({TUNE_ITER} iters x 3-fold CV)")
     search = RandomizedSearchCV(
         base_clf, param_dist,
-        n_iter=TUNE_ITER, cv=3,
-        scoring="accuracy", random_state=42,
-        n_jobs=-1, verbose=0,
+        n_iter=TUNE_ITER, cv=3, scoring="accuracy",
+        random_state=42, n_jobs=-1, verbose=0,
     )
     search.fit(X_tr[idx], y_tr[idx])
     best_p = search.best_params_
-    print(f"  CV best accuracy: {search.best_score_ * 100:.1f}%  "
+    print(f"  CV best: {search.best_score_ * 100:.1f}%  "
           f"(depth={best_p.get('max_depth')}, lr={best_p.get('learning_rate')}, "
           f"n={best_p.get('n_estimators')})")
 
-    # Retrain on full training data with best params
-    final_clf = XGBClassifier(
-        **best_p,
-        eval_metric=eval_metric,
-        random_state=42,
-        verbosity=0,
-        tree_method="hist",
+    clf = XGBClassifier(
+        **best_p, eval_metric=eval_metric,
+        random_state=42, verbosity=0, tree_method="hist",
     )
-    final_clf.fit(X_tr, y_tr)
+    clf.fit(X_tr, y_tr)
 
-    acc = accuracy_score(y_te, final_clf.predict(X_te))
-    print(f"  {label:<28}  test accuracy: {acc * 100:.1f}%   ({len(X):,} samples)")
-    return final_clf, acc
+    acc = accuracy_score(y_te, clf.predict(X_te))
+    print(f"  {label:<28}  test accuracy: {acc * 100:.1f}%  ({len(X_tr)+len(X_te):,} samples)")
+    return clf, acc
 
 
 # ---------------------------------------------------------------------------
@@ -372,7 +362,7 @@ def train_model(X: np.ndarray, y: np.ndarray, label: str,
 
 def main():
     print("\n" + "=" * 62)
-    print("  FOOTBALL PREDICTION MODEL TRAINING  (v5)")
+    print("  FOOTBALL PREDICTION MODEL TRAINING  (v6)")
     print("=" * 62)
 
     # --- Load ---
@@ -401,86 +391,221 @@ def main():
     ))
     print(f"  League encoding: {len(league_map)} leagues")
 
+    # --- Chronological 80/20 split ---
+    df = df.sort_values("date").reset_index(drop=True)
+    split_idx = int(len(df) * 0.80)
+    split_date = df.iloc[split_idx]["date"]
+    print(f"\n[3] Chronological split: train = pre {split_date.date()}, "
+          f"test = {split_date.date()} to {df['date'].max().date()}")
+    tr_mask = df["date"] < split_date
+    te_mask = ~tr_mask
+    print(f"  Train: {tr_mask.sum():,}  Test: {te_mask.sum():,}")
+
     # --- Model 1: Match result ---
-    print("\n[3] Match Result model  (H / D / A)")
+    print("\n[4] Match Result model  (H / D / A)")
     le_result = LabelEncoder()
-    # Require core rolling stats + odds (ensures we use the sharp odds signal)
-    df_r = df[df["result"].isin(["H", "D", "A"])].dropna(subset=RESULT_REQUIRE)
-    X_r  = df_r[BASE_FEATURES].values.astype(float)
-    y_r  = le_result.fit_transform(df_r["result"])
-    dist = dict(zip(le_result.classes_, np.bincount(y_r)))
-    print(f"  Samples: {len(X_r):,}  |  class dist: {dist}")
+    df_r  = df[df["result"].isin(["H", "D", "A"])].dropna(subset=RESULT_REQUIRE)
+    tr_r  = df_r[df_r["date"] < split_date]
+    te_r  = df_r[df_r["date"] >= split_date]
+    le_result.fit(df_r["result"])
+    X_tr_r = tr_r[BASE_FEATURES].values.astype(float)
+    y_tr_r = le_result.transform(tr_r["result"])
+    X_te_r = te_r[BASE_FEATURES].values.astype(float)
+    y_te_r = le_result.transform(te_r["result"])
+    print(f"  Train: {len(X_tr_r):,}  Test: {len(X_te_r):,}")
 
-    # Naive odds baseline on this exact subset
+    # Naive odds baseline on test set
     naive_pred = np.where(
-        (df_r["imp_h"] >= df_r["imp_d"]) & (df_r["imp_h"] >= df_r["imp_a"]), "H",
-        np.where(df_r["imp_d"] >= df_r["imp_a"], "D", "A")
+        (te_r["imp_h"] >= te_r["imp_d"]) & (te_r["imp_h"] >= te_r["imp_a"]), "H",
+        np.where(te_r["imp_d"] >= te_r["imp_a"], "D", "A")
     )
-    naive_acc = (naive_pred == df_r["result"].values).mean()
-    print(f"  Naive implied-prob baseline: {naive_acc * 100:.1f}%  (model must beat this)")
+    naive_acc = (naive_pred == te_r["result"].values).mean()
+    print(f"  Naive implied-prob baseline (test): {naive_acc * 100:.1f}%")
 
-    model_result, acc_r = train_model(X_r, y_r, "Match result (H/D/A)", multiclass=True)
+    # Backtest: old model on test set (informational only -- old models used random
+    # splits so some test-period data leaked into their training set; we use
+    # naive_acc as the deploy bar, not old model accuracy)
+    try:
+        with open("result_model.pkl", "rb") as f:
+            old_res = pickle.load(f)
+        old_acc_r_info = accuracy_score(y_te_r, old_res["model"].predict(X_te_r))
+        print(f"  Old model accuracy (test, FYI): {old_acc_r_info * 100:.1f}%  "
+              f"[note: old model trained with random splits -- inflated on this test set]")
+    except Exception as e:
+        print(f"  Old result model not loaded: {e}")
 
-    with open("result_model.pkl", "wb") as f:
-        pickle.dump({
-            "model":          model_result,
-            "result_encoder": le_result,
-            "league_encoder": le_league,
-            "league_map":     league_map,
-            "features":       BASE_FEATURES,
-        }, f)
-    print("  Saved: result_model.pkl")
+    model_result, new_acc_r = _tune_and_fit(
+        X_tr_r, y_tr_r, X_te_r, y_te_r, "Match result (H/D/A)", multiclass=True)
 
     # --- Model 2: Goals O/U 2.5 ---
-    print("\n[4] Goals Over/Under 2.5 model")
+    print("\n[5] Goals Over/Under 2.5 model")
     df_g = df.copy()
     df_g["over_2_5"] = ((df_g["home_goals"] + df_g["away_goals"]) > 2.5).astype(int)
     df_g = df_g.dropna(subset=RESULT_REQUIRE + ["over_2_5"])
-    X_g  = df_g[BASE_FEATURES].values.astype(float)
-    y_g  = df_g["over_2_5"].values
+    tr_g = df_g[df_g["date"] < split_date]
+    te_g = df_g[df_g["date"] >= split_date]
+    X_tr_g = tr_g[BASE_FEATURES].values.astype(float)
+    y_tr_g = tr_g["over_2_5"].values
+    X_te_g = te_g[BASE_FEATURES].values.astype(float)
+    y_te_g = te_g["over_2_5"].values
+    print(f"  Train: {len(X_tr_g):,}  Test: {len(X_te_g):,}")
 
-    model_goals, acc_g = train_model(X_g, y_g, "Goals O/U 2.5")
+    # Naive goals baseline: majority class (over 2.5 is ~56% of games)
+    naive_acc_g = max(y_te_g.mean(), 1 - y_te_g.mean())
+    print(f"  Naive majority-class baseline (test): {naive_acc_g * 100:.1f}%")
+    try:
+        with open("goals_model.pkl", "rb") as f:
+            old_gls = pickle.load(f)
+        old_acc_g_info = accuracy_score(y_te_g, old_gls["model"].predict(X_te_g))
+        print(f"  Old model accuracy (test, FYI): {old_acc_g_info * 100:.1f}%")
+    except Exception as e:
+        print(f"  Old goals model not loaded: {e}")
 
-    with open("goals_model.pkl", "wb") as f:
-        pickle.dump({
-            "model":          model_goals,
-            "league_encoder": le_league,
-            "league_map":     league_map,
-            "features":       BASE_FEATURES,
-        }, f)
-    print("  Saved: goals_model.pkl")
+    model_goals, new_acc_g = _tune_and_fit(
+        X_tr_g, y_tr_g, X_te_g, y_te_g, "Goals O/U 2.5")
 
     # --- Model 3: Corners O/U 9.5 ---
-    print("\n[5] Corners Over/Under 9.5 model")
+    print("\n[6] Corners Over/Under 9.5 model")
     df_c = df.copy()
     df_c["total_corners"] = df_c["home_corners"] + df_c["away_corners"]
     df_c["over_9_5"]      = (df_c["total_corners"] > 9.5).astype(int)
     df_c = df_c.dropna(subset=CORE_FEATURES + ["h_r_corners", "a_r_corners", "over_9_5"])
-    print(f"  Rows with corners data: {len(df_c):,}")
-    X_c  = df_c[CORNER_FEATURES].values.astype(float)
-    y_c  = df_c["over_9_5"].values
+    tr_c = df_c[df_c["date"] < split_date]
+    te_c = df_c[df_c["date"] >= split_date]
+    print(f"  Train: {len(tr_c):,}  Test: {len(te_c):,}")
+    X_tr_c = tr_c[CORNER_FEATURES].values.astype(float)
+    y_tr_c = tr_c["over_9_5"].values
+    X_te_c = te_c[CORNER_FEATURES].values.astype(float)
+    y_te_c = te_c["over_9_5"].values
 
-    model_corners, acc_c = train_model(X_c, y_c, "Corners O/U 9.5")
+    naive_acc_c = max(y_te_c.mean(), 1 - y_te_c.mean())
+    print(f"  Naive majority-class baseline (test): {naive_acc_c * 100:.1f}%")
+    try:
+        with open("corners_model.pkl", "rb") as f:
+            old_cor = pickle.load(f)
+        old_acc_c_info = accuracy_score(y_te_c, old_cor["model"].predict(X_te_c))
+        print(f"  Old model accuracy (test, FYI): {old_acc_c_info * 100:.1f}%")
+    except Exception as e:
+        print(f"  Old corners model not loaded: {e}")
 
-    with open("corners_model.pkl", "wb") as f:
-        pickle.dump({
-            "model":          model_corners,
-            "league_encoder": le_league,
-            "league_map":     league_map,
-            "features":       CORNER_FEATURES,
-        }, f)
-    print("  Saved: corners_model.pkl")
+    model_corners, new_acc_c = _tune_and_fit(
+        X_tr_c, y_tr_c, X_te_c, y_te_c, "Corners O/U 9.5")
 
-    # --- Summary ---
+    # --- Backtest summary ---
     print("\n" + "=" * 62)
-    print("  TRAINING COMPLETE — ACCURACY SUMMARY")
+    print("  BACKTEST SUMMARY  (chronological test set 2022-2026)")
     print("=" * 62)
-    print(f"  Match result  (H/D/A)    :  {acc_r * 100:.1f}%")
-    print(f"  Goals Over/Under 2.5     :  {acc_g * 100:.1f}%")
-    print(f"  Corners Over/Under 9.5   :  {acc_c * 100:.1f}%")
+    print(f"  Result  (H/D/A)  naive={naive_acc * 100:.1f}%   new={new_acc_r * 100:.1f}%"
+          f"  vs-naive={new_acc_r - naive_acc:+.3f}")
+    print(f"  Goals   O/U 2.5  naive={naive_acc_g * 100:.1f}%   new={new_acc_g * 100:.1f}%"
+          f"  vs-naive={new_acc_g - naive_acc_g:+.3f}")
+    print(f"  Corners O/U 9.5  naive={naive_acc_c * 100:.1f}%   new={new_acc_c * 100:.1f}%"
+          f"  vs-naive={new_acc_c - naive_acc_c:+.3f}")
+
+    # --- Deploy gate: new model must beat naive baseline on result + goals ---
+    # (Old model scores are informational only -- they were trained with random
+    #  splits so they had data leakage into this chronological test period.)
+    deploy = (new_acc_r >= naive_acc) and (new_acc_g >= naive_acc_g)
+
+    if deploy:
+        print("\n  [DEPLOY] New models beat naive baseline -- deploying")
+        with open("result_model.pkl", "wb") as f:
+            pickle.dump({
+                "model":          model_result,
+                "result_encoder": le_result,
+                "league_encoder": le_league,
+                "league_map":     league_map,
+                "features":       BASE_FEATURES,
+            }, f)
+        with open("goals_model.pkl", "wb") as f:
+            pickle.dump({
+                "model":          model_goals,
+                "league_encoder": le_league,
+                "league_map":     league_map,
+                "features":       BASE_FEATURES,
+            }, f)
+        with open("corners_model.pkl", "wb") as f:
+            pickle.dump({
+                "model":          model_corners,
+                "league_encoder": le_league,
+                "league_map":     league_map,
+                "features":       CORNER_FEATURES,
+            }, f)
+        print("  Saved: result_model.pkl  goals_model.pkl  corners_model.pkl")
+        _build_form_cache(df)
+    else:
+        reasons = []
+        if new_acc_r <= naive_acc:
+            reasons.append(f"result {new_acc_r*100:.1f}% <= naive {naive_acc*100:.1f}%")
+        if new_acc_g <= naive_acc_g:
+            reasons.append(f"goals {new_acc_g*100:.1f}% <= naive {naive_acc_g*100:.1f}%")
+        print(f"\n  [SKIP] NOT deploying: {'; '.join(reasons)}")
+
     print("=" * 62)
-    print("\n  Models saved:")
-    print("    result_model.pkl  |  goals_model.pkl  |  corners_model.pkl")
+
+
+def _build_form_cache(df: pd.DataFrame, n: int = 5, lookback_days: int = 365):
+    """
+    Compute per-team rolling-average stats (last n games) for all active teams
+    and save to data/club_form_cache.csv.  Deployed to Railway so the API can
+    give real team stats even when data/Matches.csv is absent.
+    """
+    cutoff = df["date"].max() - pd.Timedelta(days=lookback_days)
+    active_teams = set(
+        df.loc[df["date"] >= cutoff, "home_team"].tolist() +
+        df.loc[df["date"] >= cutoff, "away_team"].tolist()
+    )
+
+    rows = []
+    for team in sorted(active_teams):
+        mask   = (df["home_team"] == team) | (df["away_team"] == team)
+        recent = df[mask].sort_values("date").tail(n)
+        if recent.empty:
+            continue
+
+        gf = ga = sot_s = sot_n = cor_s = cor_n = 0.0
+        wins = draws = pts = hwin = hg = awin = ag_ = 0
+
+        for _, row in recent.iterrows():
+            ih = (row["home_team"] == team)
+            g  = float(row["home_goals"] if ih else row["away_goals"])
+            gc = float(row["away_goals"] if ih else row["home_goals"])
+            gf += g; ga += gc
+
+            s = row["home_sot"] if ih else row["away_sot"]
+            c = row["home_corners"] if ih else row["away_corners"]
+            if pd.notna(s) and float(s) > 0: sot_s += float(s); sot_n += 1
+            if pd.notna(c) and float(c) > 0: cor_s += float(c); cor_n += 1
+
+            if g > gc:    wins += 1; pts += 3
+            elif g == gc: draws += 1; pts += 1
+            if ih:   hg  += 1; hwin += int(g > gc)
+            else:    ag_ += 1; awin += int(g > gc)
+
+        nm = len(recent)
+        # Derive league from most recent game
+        last = recent.iloc[-1]
+        league = last["league"] if "league" in recent.columns else ""
+
+        rows.append({
+            "team":      team,
+            "league":    league,
+            "gf":        round(gf / nm, 3),
+            "ga":        round(ga / nm, 3),
+            "sot":       round(sot_s / sot_n if sot_n else 4.5, 3),
+            "corners":   round(cor_s / cor_n if cor_n else 5.0, 3),
+            "win":       round(wins  / nm, 3),
+            "draw":      round(draws / nm, 3),
+            "hwn":       round(hwin  / hg  if hg  else min(wins / nm + 0.08, 1.0), 3),
+            "awn":       round(awin  / ag_ if ag_ else max(wins / nm - 0.08, 0.0), 3),
+            "last_date": recent["date"].max().strftime("%Y-%m-%d"),
+            "n_games":   nm,
+        })
+
+    cache = pd.DataFrame(rows)
+    out = os.path.join(DATA_DIR, "club_form_cache.csv")
+    cache.to_csv(out, index=False)
+    print(f"  Form cache: {len(cache)} teams -> {out}")
 
 
 if __name__ == "__main__":

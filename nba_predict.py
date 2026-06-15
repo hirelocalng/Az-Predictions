@@ -26,7 +26,7 @@ NBA_FORM_CACHE   = 'data/nba_team_form_cache.csv'
 WNBA_FORM_CACHE  = 'data/wnba_team_form_cache.csv'
 
 NBA_OU_LINE  = 220.5
-WNBA_OU_LINE = 170.5
+WNBA_OU_LINE = 155.5  # updated: data shows median total ~156; 170.5 was only 23% over
 
 BDL_BASE      = 'https://www.balldontlie.io/api/v1'
 BDL_WNBA_BASE = 'https://api.balldontlie.io/wnba/v1'

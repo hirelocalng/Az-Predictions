@@ -139,11 +139,18 @@ def extend_nba_supplement():
 # ── NBA form cache rebuild ─────────────────────────────────────────────────────
 
 def rebuild_nba_form_cache():
-    """Rebuild nba_team_form_cache using nba_train._save_nba_team_form."""
+    """Rebuild nba_team_form_cache from the supplement CSV (no SQLite needed)."""
     print('  Rebuilding NBA form cache ...')
+    if not os.path.exists(NBA_SUPPLEMENT):
+        print(f'  {NBA_SUPPLEMENT} not found — skipping NBA form cache')
+        return
     try:
-        from nba_train import load_nba, _save_nba_team_form
-        df = load_nba()
+        from nba_train import _save_nba_team_form
+        df = pd.read_csv(NBA_SUPPLEMENT, parse_dates=['game_date'])
+        df = df[df['pts_home'].notna() & df['pts_away'].notna() & df['wl_home'].notna()]
+        df = df.sort_values('game_date').reset_index(drop=True)
+        print(f'  Loaded {len(df):,} games from supplement '
+              f'({df["game_date"].min().date()} to {df["game_date"].max().date()})')
         _save_nba_team_form(df)
         print(f'  Done -> {NBA_FORM_CACHE}')
     except Exception as e:

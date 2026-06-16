@@ -120,15 +120,6 @@ def _nba_abbr(name):
     return _NBA_NAME_TO_ABBR.get(name.lower().strip(), name[:3].upper())
 
 
-# NBA Finals 2026 — hardcoded fallback if TheSportsDB misses playoff games.
-# 2-2-1-1-1 format; Spurs have home court advantage.
-_NBA_FINALS_2026 = [
-    {'date': '2026-06-11', 'home_team': 'New York Knicks',   'away_team': 'San Antonio Spurs', 'competition': 'NBA Finals'},
-    {'date': '2026-06-14', 'home_team': 'San Antonio Spurs', 'away_team': 'New York Knicks',   'competition': 'NBA Finals'},
-    {'date': '2026-06-17', 'home_team': 'New York Knicks',   'away_team': 'San Antonio Spurs', 'competition': 'NBA Finals'},
-    {'date': '2026-06-19', 'home_team': 'San Antonio Spurs', 'away_team': 'New York Knicks',   'competition': 'NBA Finals'},
-]
-
 # ─── BallDontLie helpers ──────────────────────────────────────────────────────
 _bdl_teams_cache = None
 
@@ -416,8 +407,7 @@ def predict_wnba(home_name, away_name):
 # ─── Fixture fetching ─────────────────────────────────────────────────────────
 
 def get_nba_fixtures(start_date=None, end_date=None):
-    """Return NBA games from start_date through end_date using TheSportsDB (l=4387).
-    Falls back to hardcoded NBA Finals schedule for any date that returns no games."""
+    """Return NBA games from start_date through end_date using TheSportsDB (l=4387)."""
     from datetime import date as _date, timedelta as _td, datetime as _dtt
     if not start_date:
         start_date = _date.today().strftime('%Y-%m-%d')
@@ -427,7 +417,6 @@ def get_nba_fixtures(start_date=None, end_date=None):
     start = _dtt.strptime(start_date, '%Y-%m-%d').date()
     end_  = _dtt.strptime(end_date,   '%Y-%m-%d').date()
     result = []
-    dates_with_games = set()
 
     d = start
     while d <= end_:
@@ -465,30 +454,9 @@ def get_nba_fixtures(start_date=None, end_date=None):
                     'competition': comp,
                     'postseason':  comp != 'NBA',
                 })
-                dates_with_games.add(date_str)
         except Exception:
             pass
         d += _td(days=1)
-
-    # Inject hardcoded Finals games for any in-range date with no API results
-    for game in _NBA_FINALS_2026:
-        if start_date <= game['date'] <= end_date and game['date'] not in dates_with_games:
-            home = game['home_team']
-            away = game['away_team']
-            result.append({
-                'id':          f"finals-{game['date']}",
-                'home_team':   home,
-                'away_team':   away,
-                'home_abbr':   _nba_abbr(home),
-                'away_abbr':   _nba_abbr(away),
-                'home_score':  None,
-                'away_score':  None,
-                'status':      'Scheduled',
-                'time':        '',
-                'date':        game['date'],
-                'competition': game['competition'],
-                'postseason':  True,
-            })
 
     result.sort(key=lambda g: g['date'])
     return result

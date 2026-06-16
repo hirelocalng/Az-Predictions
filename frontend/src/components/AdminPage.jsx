@@ -122,6 +122,10 @@ export default function AdminPage({ navigate }) {
             Admin — Odds Tips
           </h1>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <button className="nav-btn" onClick={() => navigate('/admin/subscribers')}
+              style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>
+              👥 Subscribers
+            </button>
             <a href="/admin/analytics"
                target="_blank" rel="noopener noreferrer"
                style={{ color: 'var(--amber)', fontSize: '0.85rem', textDecoration: 'none' }}>

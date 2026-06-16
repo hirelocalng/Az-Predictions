@@ -677,6 +677,99 @@ def admin_analytics():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/admin/subscribers')
+@_require_admin
+def admin_subscribers():
+    """Subscriber analytics: counts, growth, recent list."""
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'Database not configured'}), 503
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB connection failed'}), 503
+
+            now_u  = datetime.now(timezone.utc)
+            t_week = now_u - timedelta(days=7)
+            t_mon  = now_u.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+            # ── Totals ────────────────────────────────────────────────────────
+            cur.execute("SELECT COUNT(*) FROM users")
+            total = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM users WHERE is_premium IS TRUE")
+            premium = cur.fetchone()[0]
+
+            free = total - premium
+            conv = round(premium / total * 100, 1) if total else 0.0
+
+            cur.execute("SELECT COUNT(*) FROM users WHERE created_at >= %s", (t_week,))
+            new_week = cur.fetchone()[0]
+
+            cur.execute("SELECT COUNT(*) FROM users WHERE created_at >= %s", (t_mon,))
+            new_month = cur.fetchone()[0]
+
+            # ── Recent subscribers (last 30) ──────────────────────────────────
+            cur.execute("""
+                SELECT u.id, u.name, u.email, u.is_premium, u.created_at,
+                       MAX(s.created_at) AS last_login
+                FROM users u
+                LEFT JOIN sessions s ON s.user_id = u.id
+                GROUP BY u.id, u.name, u.email, u.is_premium, u.created_at
+                ORDER BY u.created_at DESC
+                LIMIT 30
+            """)
+            recent = []
+            for r in cur.fetchall():
+                recent.append({
+                    'id':         r[0],
+                    'name':       r[1],
+                    'email':      r[2],
+                    'is_premium': bool(r[3]),
+                    'joined':     r[4].isoformat() if r[4] else None,
+                    'last_login': r[5].isoformat() if r[5] else None,
+                })
+
+            # ── Daily growth — last 60 days ───────────────────────────────────
+            t_60 = now_u - timedelta(days=60)
+            cur.execute("""
+                SELECT DATE(created_at AT TIME ZONE 'UTC') AS d, COUNT(*) AS n
+                FROM users
+                WHERE created_at >= %s
+                GROUP BY d
+                ORDER BY d
+            """, (t_60,))
+            daily_rows = cur.fetchall()
+
+            # Build cumulative series
+            cur.execute("SELECT COUNT(*) FROM users WHERE created_at < %s", (t_60,))
+            base = cur.fetchone()[0]
+            growth = []
+            running = base
+            for row in daily_rows:
+                running += row[1]
+                growth.append({
+                    'date':       str(row[0]),
+                    'new_users':  row[1],
+                    'cumulative': running,
+                })
+
+        return jsonify({
+            'totals': {
+                'total':           total,
+                'free':            free,
+                'premium':         premium,
+                'conversion_rate': conv,
+            },
+            'new_this_week':  new_week,
+            'new_this_month': new_month,
+            'recent':         recent,
+            'growth':         growth,
+        })
+    except Exception as e:
+        _log.exception('admin_subscribers: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 # ── Odds Tips — helpers ───────────────────────────────────────────────────────
 
 def _tip_to_dict(row):

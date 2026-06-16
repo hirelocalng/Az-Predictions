@@ -26,7 +26,7 @@ NBA_FORM_CACHE   = 'data/nba_team_form_cache.csv'
 WNBA_FORM_CACHE  = 'data/wnba_team_form_cache.csv'
 
 NBA_OU_LINE  = 220.5
-WNBA_OU_LINE = 155.5  # updated: data shows median total ~156; 170.5 was only 23% over
+WNBA_OU_LINE = 163.5  # fallback when ESPN line unavailable; recent seasons median ~163
 
 BDL_BASE      = 'https://www.balldontlie.io/api/v1'
 BDL_WNBA_BASE = 'https://api.balldontlie.io/wnba/v1'
@@ -364,8 +364,9 @@ def _run_prediction(fv, res_data, ou_data, home_name, away_name, ou_line):
 
 # ─── Public prediction API ────────────────────────────────────────────────────
 
-def predict_nba(home_name, away_name):
-    """Return prediction dict for an NBA match."""
+def predict_nba(home_name, away_name, ou_line=None):
+    """Return prediction dict for an NBA match.
+    ou_line: real bookmaker O/U line for this game; falls back to NBA_OU_LINE."""
     if _NBA_RES is None:
         _load_models()
     try:
@@ -381,14 +382,16 @@ def predict_nba(home_name, away_name):
 
         h2h = _nba_h2h(home_name, away_name)
         fv  = _build_nba_fv(hf, af, h2h)
-        return _run_prediction(fv, _NBA_RES, _NBA_OU, home_name, away_name, NBA_OU_LINE)
+        effective_line = ou_line if ou_line is not None else NBA_OU_LINE
+        return _run_prediction(fv, _NBA_RES, _NBA_OU, home_name, away_name, effective_line)
     except Exception as e:
         traceback.print_exc()
         return {'error': str(e)}
 
 
-def predict_wnba(home_name, away_name):
-    """Return prediction dict for a WNBA match."""
+def predict_wnba(home_name, away_name, ou_line=None):
+    """Return prediction dict for a WNBA match.
+    ou_line: real bookmaker O/U line for this game; falls back to WNBA_OU_LINE."""
     if _WNBA_RES is None:
         _load_models()
     try:
@@ -398,7 +401,8 @@ def predict_wnba(home_name, away_name):
         af  = _wnba_form_from_cache(away_abbr)
         h2h = 0.5  # not enough current data for WNBA H2H
         fv  = _build_wnba_fv(hf, af, h2h)
-        return _run_prediction(fv, _WNBA_RES, _WNBA_OU, home_name, away_name, WNBA_OU_LINE)
+        effective_line = ou_line if ou_line is not None else WNBA_OU_LINE
+        return _run_prediction(fv, _WNBA_RES, _WNBA_OU, home_name, away_name, effective_line)
     except Exception as e:
         traceback.print_exc()
         return {'error': str(e)}
@@ -505,6 +509,16 @@ def get_wnba_fixtures(start_date=None, end_date=None):
                     status = 'Scheduled'
                 hs  = home_c.get('score')
                 as_ = away_c.get('score')
+                # Extract real bookmaker O/U line from inline DraftKings odds
+                inline_odds = comp0.get('odds', [])
+                ou_line = None
+                if inline_odds:
+                    try:
+                        ou_val = inline_odds[0].get('overUnder')
+                        if ou_val is not None:
+                            ou_line = float(ou_val)
+                    except (TypeError, ValueError):
+                        pass
                 result.append({
                     'id':         ev.get('id'),
                     'home_team':  ht.get('displayName', ''),
@@ -516,6 +530,7 @@ def get_wnba_fixtures(start_date=None, end_date=None):
                     'status':     status,
                     'time':       time_utc,
                     'date':       game_date,
+                    'ou_line':    ou_line,
                     'postseason': False,
                 })
         except Exception:

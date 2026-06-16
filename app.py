@@ -2731,7 +2731,7 @@ def nba_fixtures():
             games   = _get_games(end_date=_end)
             result  = []
             for g in games:
-                pred = _predict(g['home_team'], g['away_team'])
+                pred = _predict(g['home_team'], g['away_team'], ou_line=g.get('ou_line'))
                 if pred.get('error'):
                     continue
                 comp = g.get('competition') or ('NBA Playoffs' if g.get('postseason') else 'NBA')
@@ -2739,7 +2739,7 @@ def nba_fixtures():
                     **g,
                     'sport':            'nba',
                     'competition':      comp,
-                    'ou_line':          220.5,
+                    'ou_line':          g.get('ou_line') or 220.5,
                     'result':           {'home': round(pred['home_win_pct'] / 100, 3),
                                          'away': round(pred['away_win_pct'] / 100, 3)},
                     'over_total':       round(pred['over_pct'] / 100, 3),
@@ -2781,14 +2781,14 @@ def wnba_fixtures():
             games   = _get_games(end_date=_end)
             result  = []
             for g in games:
-                pred = _predict(g['home_team'], g['away_team'])
+                pred = _predict(g['home_team'], g['away_team'], ou_line=g.get('ou_line'))
                 if pred.get('error'):
                     continue
                 result.append({
                     **g,
                     'sport':            'wnba',
                     'competition':      'WNBA',
-                    'ou_line':          155.5,
+                    'ou_line':          g.get('ou_line') or 163.5,
                     'result':           {'home': round(pred['home_win_pct'] / 100, 3),
                                          'away': round(pred['away_win_pct'] / 100, 3)},
                     'over_total':       round(pred['over_pct'] / 100, 3),

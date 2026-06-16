@@ -33,7 +33,7 @@ WNBA_RESULT_PATH = 'wnba_result_model.pkl'
 WNBA_OU_PATH     = 'wnba_ou_model.pkl'
 
 NBA_OU_LINE   = 220.5
-WNBA_OU_LINE  = 155.5  # updated: median total is ~156; 170.5 was only 23% over
+WNBA_OU_LINE  = 163.5  # recent seasons (2020-2025) median; ESPN lines ~163-178
 FORM_N        = 10
 
 # Normalise ESPN abbreviations in v2 data → canonical abbrs used in nba_predict.py

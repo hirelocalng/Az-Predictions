@@ -2633,7 +2633,7 @@ def best_bet_of_day():
     # ── Add NBA / WNBA candidates to the pool ─────────────────────────────────
     for sport_label, bball_games, default_ou in [
         ('NBA',  _NBA_CACHE.get('data')  or [], 220.5),
-        ('WNBA', _WNBA_CACHE.get('data') or [], 170.5),
+        ('WNBA', _WNBA_CACHE.get('data') or [], 155.5),
     ]:
         for g in bball_games:
             if g.get('date','') != today_str:
@@ -2788,7 +2788,7 @@ def wnba_fixtures():
                     **g,
                     'sport':            'wnba',
                     'competition':      'WNBA',
-                    'ou_line':          170.5,
+                    'ou_line':          155.5,
                     'result':           {'home': round(pred['home_win_pct'] / 100, 3),
                                          'away': round(pred['away_win_pct'] / 100, 3)},
                     'over_total':       round(pred['over_pct'] / 100, 3),

@@ -72,7 +72,7 @@ function GameCard({ game }) {
   const homePct    = game.result?.home * 100 || game.home_win_pct || 50
   const awayPct    = game.result?.away * 100 || game.away_win_pct || 50
   const overPct    = game.over_total * 100 || game.over_pct || 50
-  const ouLine     = game.ou_line || (game.sport === 'wnba' ? 170.5 : 220.5)
+  const ouLine     = game.ou_line || (game.sport === 'wnba' ? 155.5 : 220.5)
   const ouLabel    = overPct > 50 ? `Over ${ouLine}` : `Under ${ouLine}`
   const ouConf     = overPct > 50 ? overPct : (100 - overPct)
   const bestBet    = game.best_bet || game.predicted_winner || ''

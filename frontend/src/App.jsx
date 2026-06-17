@@ -107,6 +107,35 @@ function IOSBanner() {
   )
 }
 
+// ── Save hint banner (logged-out only) ───────────────────────────────────────
+
+function SaveHint({ navigate }) {
+  const [visible, setVisible] = useState(
+    () => !localStorage.getItem('save_hint_dismissed')
+  )
+  if (!visible) return null
+  const dismiss = () => {
+    localStorage.setItem('save_hint_dismissed', '1')
+    setVisible(false)
+  }
+  return (
+    <div className="save-hint">
+      <span className="save-hint-text">
+        <svg width="14" height="14" viewBox="0 0 24 24"
+             fill="var(--red)" stroke="var(--red)" strokeWidth="2"
+             strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+        </svg>
+        Click the heart on any prediction to save and track outcomes.
+      </span>
+      <button className="save-hint-cta" onClick={() => { dismiss(); navigate('/register') }}>
+        Sign up free →
+      </button>
+      <button className="save-hint-close" onClick={dismiss} aria-label="Dismiss">×</button>
+    </div>
+  )
+}
+
 // ── Telegram ─────────────────────────────────────────────────────────────────
 
 const TelegramIcon = ({ size = 18 }) => (
@@ -316,6 +345,7 @@ export default function App() {
       <LiveScoresContext.Provider value={liveScores}>
         <div className="app">
           <Header auth={auth} onLogout={logout} navigate={navigate} />
+          {!auth && <SaveHint navigate={navigate} />}
 
           <main style={{ paddingTop: 64 }}>
             <Hero

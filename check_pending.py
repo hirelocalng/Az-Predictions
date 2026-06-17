@@ -70,7 +70,7 @@ def search(home, away, match_date):
                             hs, as_ = int(cs[0]['score']), int(cs[1]['score'])
                         except: return None
                         return slug, dc, hs, as_, _corners(comp)
-            except Exception as e:
+            except Exception:
                 pass
     return None
 

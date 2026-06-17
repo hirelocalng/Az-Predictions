@@ -21,7 +21,7 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
 
     <!-- OneSignal Web Push SDK -->
-    <script defer src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js"></script>
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
     <script>
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       OneSignalDeferred.push(async function(OneSignal) {
@@ -31,6 +31,9 @@
           serviceWorkerParam: { scope: "/" },
           allowLocalhostAsSecureOrigin: true,
         });
+        // serviceWorkerPath/Param keep OneSignal on the combined /sw.js
+        // worker instead of the default OneSignalSDKWorker.js, avoiding a
+        // scope conflict with main.jsx's own navigator.serviceWorker.register('/sw.js').
         // Cache subscription ID immediately and on every change so it's
         // available even before the user logs in (anonymous subscribers).
         function cacheSubId() {

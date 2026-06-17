@@ -21,7 +21,7 @@
     <link rel="apple-touch-icon" href="/icon-192.png" />
 
     <!-- OneSignal Web Push SDK -->
-    <script defer src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js"></script>
+    <script src="https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js" defer></script>
     <script>
       window.OneSignalDeferred = window.OneSignalDeferred || [];
       OneSignalDeferred.push(async function(OneSignal) {
@@ -31,6 +31,9 @@
           serviceWorkerParam: { scope: "/" },
           allowLocalhostAsSecureOrigin: true,
         });
+        // serviceWorkerPath/Param keep OneSignal on the combined /sw.js
+        // worker instead of the default OneSignalSDKWorker.js, avoiding a
+        // scope conflict with main.jsx's own navigator.serviceWorker.register('/sw.js').
         // Cache subscription ID immediately and on every change so it's
         // available even before the user logs in (anonymous subscribers).
         function cacheSubId() {
@@ -60,8 +63,8 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="/assets/index-D9b0CrDq.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-C3Rk11Uv.css">
+    <script type="module" crossorigin src="/assets/index-ByNniexd.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DNoYDVd7.css">
   </head>
   <body>
     <div id="root"></div>

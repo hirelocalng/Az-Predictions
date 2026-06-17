@@ -19,7 +19,6 @@ Deps: pip install playwright beautifulsoup4 pandas
 import json
 import os
 import time
-import re
 
 import pandas as pd
 from bs4 import BeautifulSoup, Comment

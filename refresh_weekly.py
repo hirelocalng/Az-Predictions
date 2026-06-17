@@ -17,7 +17,7 @@ What it does NOT do:
 Run locally or via GitHub Actions (.github/workflows/weekly_refresh.yml).
 """
 
-import io, os, time, sys
+import io, os, time
 import requests
 import pandas as pd
 import numpy as np

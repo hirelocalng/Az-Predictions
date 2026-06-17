@@ -14,7 +14,7 @@ import os, pickle, sqlite3, time, traceback
 import requests
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
 NBA_RESULT_PATH  = 'nba_result_model.pkl'

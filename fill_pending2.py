@@ -11,7 +11,7 @@ Usage:
     python fill_pending2.py
 """
 
-import os, sys, re, json, logging
+import os, sys, re, logging
 from datetime import datetime, timezone, timedelta, date as _date
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')

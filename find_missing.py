@@ -55,7 +55,7 @@ def espn_search(home, away, md):
                                     hs, as_ = int(cs[0]['score']), int(cs[1]['score'])
                                     return slug, dc, hs, as_
                                 except: pass
-            except Exception as e:
+            except Exception:
                 pass
     return None
 
@@ -74,7 +74,7 @@ def tsdb_search(home, away, md):
                     as_ = ev.get('intAwayScore')
                     if hs is not None and as_ is not None:
                         return int(hs), int(as_)
-        except Exception as e:
+        except Exception:
             pass
     return None
 

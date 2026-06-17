@@ -759,6 +759,33 @@ body::after {
   .install-float { bottom: 86px; right: 18px; }
 }
 
+/* ── Save-hint banner ───────────────────────────────────────────────────────── */
+.save-hint {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  flex-wrap: wrap;
+  background: linear-gradient(90deg, rgba(255,77,109,0.10) 0%, rgba(255,77,109,0.05) 100%);
+  border-bottom: 1px solid rgba(255,77,109,0.18);
+  padding: 10px 16px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  text-align: center;
+}
+.save-hint-text { display: flex; align-items: center; gap: 5px; }
+.save-hint-text svg { flex-shrink: 0; }
+.save-hint-cta {
+  background: none; border: 1px solid rgba(255,77,109,0.5);
+  border-radius: 20px; padding: 3px 12px;
+  color: var(--red); font-size: 0.78rem; font-weight: 600;
+  cursor: pointer; white-space: nowrap; transition: background var(--transition);
+}
+.save-hint-cta:hover { background: rgba(255,77,109,0.12); }
+.save-hint-close {
+  background: none; border: none; color: var(--text-subtle);
+  font-size: 1rem; cursor: pointer; padding: 0 2px; line-height: 1;
+  margin-left: 4px;
+}
+.save-hint-close:hover { color: var(--text-muted); }
+
 /* ── Telegram ──────────────────────────────────────────────────────────────── */
 .tg-float {
   position: fixed; bottom: 24px; right: 24px; z-index: 300;

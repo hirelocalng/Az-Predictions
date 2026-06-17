@@ -887,7 +887,9 @@ def _require_admin(f):
     def _wrapper(*args, **kwargs):
         if not _ADMIN_PASSWORD:
             return jsonify({'error': 'Admin not configured — set ADMIN_PASSWORD env var'}), 503
-        pw = request.headers.get('X-Admin-Password', '') or request.args.get('admin_pw', '')
+        pw = (request.headers.get('X-Admin-Password', '')
+              or request.args.get('admin_pw', '')
+              or (request.get_json(silent=True) or {}).get('password', ''))
         if pw != _ADMIN_PASSWORD:
             return jsonify({'error': 'Unauthorized'}), 403
         session['az_admin'] = True   # stamp session so /admin/analytics can check it

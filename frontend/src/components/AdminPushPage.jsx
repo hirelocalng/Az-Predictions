@@ -67,7 +67,7 @@ export default function AdminPushPage({ navigate }) {
     setSendMsg('')
     setSending(true)
     try {
-      const body = { title: form.title, message: form.message, recipientType: form.recipientType }
+      const body = { password: pw, title: form.title, message: form.message, recipientType: form.recipientType }
       if (form.recipientType === 'specific') body.userId = parseInt(form.userId, 10)
       const r = await fetch('/api/admin/send-notification', {
         method: 'POST',
@@ -79,7 +79,7 @@ export default function AdminPushPage({ navigate }) {
       const count = d.sent_count < 0 ? 'all subscribers' : `${d.sent_count} device(s)`
       setSendMsg(`✅ Sent to ${count}`)
       setForm(f => ({ ...f, title: '', message: '' }))
-      loadHistory()
+      loadHistory(pw)
     } catch { setSendMsg('❌ Network error') }
     finally { setSending(false) }
   }

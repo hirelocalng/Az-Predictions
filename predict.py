@@ -1,3 +1,4 @@
+
 """
 Football match prediction script (v4).
 Loads the three trained models and predicts:
@@ -17,6 +18,7 @@ import sys
 import numpy as np
 
 MODEL_FILES = {
+
     "result":  "result_model.pkl",
     "goals":   "goals_model.pkl",
     "corners": "corners_model.pkl",
@@ -116,7 +118,7 @@ def build_features(home: dict, away: dict,
     Build (base_feat, corner_feat) matching BASE_FEATURES / CORNER_FEATURES
     defined in train.py.
 
-    BASE_FEATURES order (27 features):
+    BASE_FEATURES order (26 features):
       h_r_gf, h_r_ga, h_r_gd,
       h_r_sot,
       h_r_win, h_r_draw, h_r_pts, h_r_home_win,
@@ -228,7 +230,7 @@ def print_predictions(home_team: str, away_team: str,
     print(f"  └{divider[1:]}")
 
     top_cls,  top_prob  = r_pairs[0]
-    top_label = label_map[top_cls].strip()
+    top_label = label_map.get(top_cls, top_cls).strip()
     goals_call   = "Over  2.5" if over_goals   >= 0.5 else "Under 2.5"
     corners_call = "Over  9.5" if over_corners >= 0.5 else "Under 9.5"
 
@@ -269,12 +271,22 @@ def main():
     form5_a  = ask_float("Away team Form5 points (0–15) ", round(away_stats["win"] * 15), 0, 15)
 
     print("\n  Betting odds — decimal format (press Enter to skip; model still works without)")
-    raw_oh = input("    Home win odds (e.g. 2.10) [Enter to skip]: ").strip()
-    raw_od = input("    Draw odds     (e.g. 3.30) [Enter to skip]: ").strip()
-    raw_oa = input("    Away win odds (e.g. 4.00) [Enter to skip]: ").strip()
-    odd_h = float(raw_oh) if raw_oh else math.nan
-    odd_d = float(raw_od) if raw_od else math.nan
-    odd_a = float(raw_oa) if raw_oa else math.nan
+    def _parse_odd(prompt: str) -> float:
+        raw = input(f"    {prompt} [Enter to skip]: ").strip()
+        if not raw:
+            return math.nan
+        try:
+            v = float(raw)
+            if v <= 0:
+                print("    Invalid odds — skipping")
+                return math.nan
+            return v
+        except ValueError:
+            print("    Not a number — skipping")
+            return math.nan
+    odd_h = _parse_odd("Home win odds (e.g. 2.10)")
+    odd_d = _parse_odd("Draw odds     (e.g. 3.30)")
+    odd_a = _parse_odd("Away win odds (e.g. 4.00)")
     if not (math.isnan(odd_h) or math.isnan(odd_d) or math.isnan(odd_a)):
         ih, id_, ia, _ = _implied_probs(odd_h, odd_d, odd_a)
         print(f"    Implied: Home {ih*100:.1f}%  Draw {id_*100:.1f}%  Away {ia*100:.1f}%")

@@ -10,6 +10,7 @@ import BasketballSection from './components/BasketballSection.jsx'
 import OddsTipsSection from './components/OddsTipsSection.jsx'
 import AdminPage from './components/AdminPage.jsx'
 import AdminSubscribersPage from './components/AdminSubscribersPage.jsx'
+import AdminPushPage from './components/AdminPushPage.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import RegisterPage from './components/RegisterPage.jsx'
 import SubscribePage from './components/SubscribePage.jsx'
@@ -25,7 +26,8 @@ const pathToPage = p => {
   if (p === '/subscribe') return 'subscribe'
   if (p === '/saved')              return 'saved'
   if (p === '/admin')              return 'admin'
-  if (p === '/admin/subscribers') return 'admin-subscribers'
+  if (p === '/admin/subscribers')     return 'admin-subscribers'
+  if (p === '/admin/push-notifications') return 'admin-push'
   return 'home'
 }
 
@@ -300,6 +302,8 @@ export default function App() {
     return <AdminPage navigate={navigate} />
   if (page === 'admin-subscribers')
     return <AdminSubscribersPage navigate={navigate} />
+  if (page === 'admin-push')
+    return <AdminPushPage navigate={navigate} />
 
   // Main app
   return (

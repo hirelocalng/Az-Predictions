@@ -1926,6 +1926,52 @@ body::after {
 .saved-premium-sub   { font-size: 0.75rem; color: var(--text-2); }
 .saved-premium-banner .btn-primary { white-space: nowrap; flex-shrink: 0; padding: 9px 16px; }
 
+/* ── Admin Push Notifications ──────────────────────────────────────────────── */
+.push-compose-grid {
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  gap: 20px;
+  align-items: start;
+}
+@media (max-width: 700px) {
+  .push-compose-grid { grid-template-columns: 1fr; }
+}
+
+.push-phone {
+  background: #1a1a2e;
+  border: 2px solid rgba(255,255,255,.12);
+  border-radius: 24px;
+  padding: 16px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  position: sticky;
+  top: 90px;
+}
+.push-phone-bar {
+  font-size: 0.7rem; color: var(--text-muted); font-weight: 600; letter-spacing: 0.04em;
+}
+.push-notif {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.1);
+  border-radius: 14px; padding: 12px 14px; width: 100%;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.push-notif-top {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;
+}
+.push-notif-app  { font-size: 0.68rem; font-weight: 700; color: var(--text-muted); }
+.push-notif-time { font-size: 0.65rem; color: var(--text-muted); }
+.push-notif-title {
+  font-size: 0.78rem; font-weight: 700; color: var(--text); line-height: 1.3; word-break: break-word;
+}
+.push-notif-body {
+  font-size: 0.72rem; color: var(--text-2); line-height: 1.4; word-break: break-word;
+}
+.push-phone-label {
+  font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em;
+}
+
 /* nav saved button */
 .nav-saved {
   border-color: var(--border-hi) !important;

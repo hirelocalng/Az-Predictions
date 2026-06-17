@@ -126,6 +126,10 @@ export default function AdminPage({ navigate }) {
               style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>
               👥 Subscribers
             </button>
+            <button className="nav-btn" onClick={() => navigate('/admin/push-notifications')}
+              style={{ color: 'var(--green)', borderColor: 'var(--green)' }}>
+              🔔 Push
+            </button>
             <a href="/admin/analytics"
                target="_blank" rel="noopener noreferrer"
                style={{ color: 'var(--amber)', fontSize: '0.85rem', textDecoration: 'none' }}>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../contexts/AuthContext.jsx'
+import SavePredictionButton from './SavePredictionButton.jsx'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,10 @@ function GameCard({ game }) {
   const hasSco  = game.home_score != null && game.away_score != null
   const kickoff = localKickoff(game.date, game.time)
 
+  const matchId = game.date && game.home_team && game.away_team
+    ? `${game.date}/${game.home_team.toLowerCase().trim()}/${game.away_team.toLowerCase().trim()}`
+    : null
+
   function Logo({ src, abbr, alt }) {
     const [err, setErr] = useState(false)
     if (err || !src) {
@@ -105,6 +110,7 @@ function GameCard({ game }) {
           )}
           {isLive && <span className="bball-live-badge">LIVE</span>}
           {isDone && <span className="bball-done-badge">FINAL</span>}
+          <SavePredictionButton matchId={matchId} />
         </div>
       </div>
 

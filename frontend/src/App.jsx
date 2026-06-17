@@ -151,7 +151,7 @@ function Header({ auth, onLogout, navigate }) {
           </div>
         ) : (
           <div className="user-area">
-            <button className="nav-btn" onClick={() => navigate('/login')}>Log in</button>
+            <button className="nav-btn nav-login" onClick={() => navigate('/login')}>Log in</button>
             <button className="nav-btn nav-cta" onClick={() => navigate('/register')}>Sign up</button>
           </div>
         )}

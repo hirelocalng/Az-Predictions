@@ -184,8 +184,22 @@ body::after {
 }
 
 .nav-cta {
-  border-color: var(--green-border) !important;
-  color: var(--green) !important; background: var(--green-dim) !important;
+  background: var(--green) !important;
+  border-color: var(--green) !important;
+  color: #000 !important;
+  font-weight: 600 !important;
+}
+.nav-cta:hover {
+  background: #00e892 !important;
+  border-color: #00e892 !important;
+}
+
+.nav-login {
+  border-color: var(--border-hi) !important;
+  color: var(--text) !important;
+}
+.nav-login:hover {
+  background: rgba(255,255,255,0.08) !important;
 }
 
 /* Legacy header-status (keep for compat) */

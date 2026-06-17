@@ -243,9 +243,21 @@ export default function App() {
   // call our no-op so imports stay consistent.
   useEffect(() => { initOneSignal() }, [])
 
-  // OneSignal — login/logout whenever auth state changes
+  // OneSignal — link/unlink user whenever auth state changes
   useEffect(() => {
     if (auth?.user?.id && auth?.token) {
+      // Link the logged-in user's ID to their push subscription
+      window.OneSignalDeferred = window.OneSignalDeferred || []
+      window.OneSignalDeferred.push(async (OneSignal) => {
+        try {
+          // v16 API: login(); v15 legacy: setExternalUserId()
+          if (typeof OneSignal.login === 'function') {
+            await OneSignal.login(String(auth.user.id))
+          } else if (typeof OneSignal.setExternalUserId === 'function') {
+            await OneSignal.setExternalUserId(String(auth.user.id))
+          }
+        } catch (e) { /* silent — SDK may not be ready yet */ }
+      })
       oneSignalLogin(auth.user.id, auth.token)
     } else if (auth === null) {
       oneSignalLogout()

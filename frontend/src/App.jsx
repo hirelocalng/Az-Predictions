@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { initOneSignal, oneSignalLogin, oneSignalLogout } from './notifications.js'
 import WorldCupSection from './components/WorldCupSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
@@ -235,6 +236,26 @@ export default function App() {
     window.addEventListener('popstate', handlePop)
     return () => window.removeEventListener('popstate', handlePop)
   }, [])
+
+  // OneSignal — initialise once on mount using App ID from backend
+  const osInitRef = useRef(false)
+  useEffect(() => {
+    if (osInitRef.current) return
+    osInitRef.current = true
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => initOneSignal(cfg.onesignal_app_id))
+      .catch(() => {})
+  }, [])
+
+  // OneSignal — login/logout whenever auth state changes
+  useEffect(() => {
+    if (auth?.user?.id && auth?.token) {
+      oneSignalLogin(auth.user.id, auth.token)
+    } else if (auth === null) {
+      oneSignalLogout()
+    }
+  }, [auth?.user?.id])
 
   // Verify stored token on mount
   useEffect(() => {

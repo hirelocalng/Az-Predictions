@@ -56,12 +56,16 @@ RES_ENCODER = club_result['result_encoder'] if club_result else None
 _HISTORY_PATH = os.path.join(_BASE_DIR, 'prediction_history.json')
 _HISTORY_LOCK   = threading.Lock()
 _DB_URL         = os.environ.get('DATABASE_URL', '')
-_KORAPAY_SECRET = os.environ.get('KORAPAY_SECRET_KEY', '')
-_KORAPAY_PUBLIC = os.environ.get('KORAPAY_PUBLIC_KEY', '')
+_KORAPAY_SECRET    = os.environ.get('KORAPAY_SECRET_KEY', '')
+_KORAPAY_PUBLIC    = os.environ.get('KORAPAY_PUBLIC_KEY', '')
+_ONESIGNAL_APP_ID  = os.environ.get('ONESIGNAL_APP_ID', '')
+_ONESIGNAL_REST_KEY = os.environ.get('ONESIGNAL_REST_API_KEY', '')
+_APP_URL           = os.environ.get('APP_URL', 'https://azpredicts.com')
 
 logging.basicConfig(level=logging.INFO)
-_log.info('KORAPAY_PUBLIC_KEY set: %s', bool(_KORAPAY_PUBLIC))
-_log.info('KORAPAY_SECRET_KEY set: %s', bool(_KORAPAY_SECRET))
+_log.info('KORAPAY_PUBLIC_KEY set: %s',   bool(_KORAPAY_PUBLIC))
+_log.info('KORAPAY_SECRET_KEY set: %s',   bool(_KORAPAY_SECRET))
+_log.info('ONESIGNAL configured: %s',     bool(_ONESIGNAL_APP_ID and _ONESIGNAL_REST_KEY))
 
 
 def _build_db_url():
@@ -228,7 +232,43 @@ def _init_db():
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_saved_predictions_status ON saved_predictions(status)"
             )
-        print('DB init: all tables ready (predictions, users, sessions, analytics_logs, odds_tips, saved_predictions) ✓', flush=True)
+            # ── Notification tables ───────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS notification_tokens (
+                    id                  SERIAL PRIMARY KEY,
+                    user_id             INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    onesignal_player_id VARCHAR(128) NOT NULL,
+                    created_at          TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(user_id, onesignal_player_id)
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_notif_tokens_user ON notification_tokens(user_id)"
+            )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS won_predictions_notified (
+                    prediction_id INTEGER PRIMARY KEY REFERENCES predictions(id) ON DELETE CASCADE,
+                    notified_at   TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS premium_upsell_notifications (
+                    id      SERIAL PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    sent_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_premium_upsell_user ON premium_upsell_notifications(user_id, sent_at)"
+            )
+            # ── Extend saved_predictions with notification flags ───────────────
+            for _col in [
+                "ALTER TABLE saved_predictions ADD COLUMN IF NOT EXISTS match_start_notification_sent BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE saved_predictions ADD COLUMN IF NOT EXISTS result_notification_sent BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE saved_predictions ADD COLUMN IF NOT EXISTS result_notification_sent_at TIMESTAMPTZ",
+            ]:
+                cur.execute(_col)
+        print('DB init: all tables ready ✓', flush=True)
         _log.info('DB: all tables ready')
     except Exception as e:
         print(f'DB init FAILED: {e}', flush=True)
@@ -495,6 +535,214 @@ def _sync_saved_statuses(cur):
         """)
     except Exception as e:
         _log.warning('_sync_saved_statuses: %s', e)
+
+
+# ── OneSignal push notifications ──────────────────────────────────────────────
+
+def _onesignal_send(payload: dict) -> bool:
+    """POST a notification to OneSignal's REST API. Returns True on success."""
+    if not _ONESIGNAL_APP_ID or not _ONESIGNAL_REST_KEY:
+        return False
+    try:
+        import requests as _rq
+        r = _rq.post(
+            'https://onesignal.com/api/v1/notifications',
+            headers={
+                'Authorization': f'Basic {_ONESIGNAL_REST_KEY}',
+                'Content-Type': 'application/json',
+            },
+            json={'app_id': _ONESIGNAL_APP_ID, **payload},
+            timeout=10,
+        )
+        if not r.ok:
+            _log.warning('OneSignal %s: %s', r.status_code, r.text[:300])
+        return r.ok
+    except Exception as e:
+        _log.warning('OneSignal send error: %s', e)
+        return False
+
+
+def _notify_kickoff():
+    """Every 10 min: alert users whose saved bets kick off in ~15 minutes."""
+    if not _ONESIGNAL_APP_ID:
+        return
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            cur.execute("""
+                SELECT sp.id, p.home_team, p.away_team, p.predicted_winner,
+                       array_agg(nt.onesignal_player_id) AS player_ids
+                  FROM saved_predictions sp
+                  JOIN predictions p ON sp.prediction_id = p.id
+                  JOIN notification_tokens nt ON sp.user_id = nt.user_id
+                 WHERE sp.match_start_notification_sent = FALSE
+                   AND sp.status = 'pending'
+                   AND p.kickoff_utc IS NOT NULL
+                   AND p.kickoff_utc::timestamptz
+                       BETWEEN NOW() + INTERVAL '10 min'
+                           AND NOW() + INTERVAL '20 min'
+                 GROUP BY sp.id, p.home_team, p.away_team, p.predicted_winner
+            """)
+            rows = cur.fetchall()
+            sent_ids = []
+            for sp_id, home, away, pred_winner, player_ids in rows:
+                bet = pred_winner or 'your saved bet'
+                ok = _onesignal_send({
+                    'include_player_ids': player_ids,
+                    'headings': {'en': '⚽ Kick-off in 15 minutes!'},
+                    'contents': {'en': f'{home} vs {away} — {bet} starts soon'},
+                    'url':      f'{_APP_URL}/saved',
+                })
+                if ok:
+                    sent_ids.append(sp_id)
+            if sent_ids:
+                cur.execute(
+                    'UPDATE saved_predictions SET match_start_notification_sent=TRUE WHERE id=ANY(%s)',
+                    (sent_ids,)
+                )
+                _log.info('Kickoff alerts sent: %d', len(sent_ids))
+    except Exception as e:
+        _log.warning('_notify_kickoff: %s', e)
+
+
+def _notify_results():
+    """Every 5 min: tell users when their saved bets resolve (won or lost)."""
+    if not _ONESIGNAL_APP_ID:
+        return
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            cur.execute("""
+                SELECT sp.id, sp.status,
+                       p.home_team, p.away_team, p.predicted_winner,
+                       p.actual_home_score, p.actual_away_score,
+                       array_agg(nt.onesignal_player_id) AS player_ids
+                  FROM saved_predictions sp
+                  JOIN predictions p ON sp.prediction_id = p.id
+                  JOIN notification_tokens nt ON sp.user_id = nt.user_id
+                 WHERE sp.result_notification_sent = FALSE
+                   AND sp.status IN ('won', 'lost')
+                 GROUP BY sp.id, sp.status, p.home_team, p.away_team,
+                          p.predicted_winner, p.actual_home_score, p.actual_away_score
+            """)
+            rows = cur.fetchall()
+            sent_ids = []
+            now = datetime.now(timezone.utc)
+            for sp_id, status, home, away, pred_winner, hs, as_, player_ids in rows:
+                icon    = '✅' if status == 'won' else '❌'
+                outcome = 'WON' if status == 'won' else 'Lost'
+                score   = f' ({hs}–{as_})' if hs is not None and as_ is not None else ''
+                bet     = pred_winner or f'{home} vs {away}'
+                ok = _onesignal_send({
+                    'include_player_ids': player_ids,
+                    'headings': {'en': f'{icon} Prediction result'},
+                    'contents': {'en': f'{home} vs {away}{score} — {bet} {outcome}'},
+                    'url':      f'{_APP_URL}/saved',
+                })
+                if ok:
+                    sent_ids.append(sp_id)
+            if sent_ids:
+                cur.execute(
+                    'UPDATE saved_predictions SET result_notification_sent=TRUE, result_notification_sent_at=%s WHERE id=ANY(%s)',
+                    (now, sent_ids)
+                )
+                _log.info('Result notifications sent: %d', len(sent_ids))
+    except Exception as e:
+        _log.warning('_notify_results: %s', e)
+
+
+def _notify_won_predictions():
+    """Every 10 min: broadcast newly-resolved winning predictions to all subscribers."""
+    if not _ONESIGNAL_APP_ID:
+        return
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            cur.execute("""
+                SELECT p.id, p.home_team, p.away_team, p.predicted_winner,
+                       COALESCE((p.prediction_payload->>'best_bet_conf')::float, 0) AS confidence,
+                       COALESCE(p.sport, 'football') AS sport
+                  FROM predictions p
+                 WHERE p.result_status = 'WON'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM won_predictions_notified wn
+                        WHERE wn.prediction_id = p.id
+                   )
+                 ORDER BY p.created_at DESC
+                 LIMIT 20
+            """)
+            preds = cur.fetchall()
+            notified_ids = []
+            now = datetime.now(timezone.utc)
+            for pred_id, home, away, pred_winner, confidence, sport in preds:
+                icon     = '🏀' if sport in ('nba', 'wnba') else '⚽'
+                conf_str = f' ({confidence*100:.0f}% confidence)' if confidence > 0 else ''
+                bet      = pred_winner or 'Prediction'
+                ok = _onesignal_send({
+                    'included_segments': ['Subscribed Users'],
+                    'headings': {'en': f'✅ {icon} {home} vs {away}'},
+                    'contents': {'en': f'{bet} WON{conf_str}'},
+                    'url':      _APP_URL,
+                })
+                if ok:
+                    notified_ids.append(pred_id)
+            if notified_ids:
+                cur.executemany(
+                    'INSERT INTO won_predictions_notified (prediction_id, notified_at) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+                    [(pid, now) for pid in notified_ids]
+                )
+                _log.info('Won-prediction broadcasts sent: %d', len(notified_ids))
+    except Exception as e:
+        _log.warning('_notify_won_predictions: %s', e)
+
+
+def _send_premium_upsell():
+    """Daily at 9 AM UTC: push an upsell notification to free-tier users only."""
+    if not _ONESIGNAL_APP_ID:
+        return
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return
+            cur.execute("""
+                SELECT u.id, array_agg(DISTINCT nt.onesignal_player_id) AS player_ids
+                  FROM users u
+                  JOIN notification_tokens nt ON u.id = nt.user_id
+                 WHERE (u.is_premium = FALSE
+                        OR u.premium_until IS NULL
+                        OR u.premium_until < NOW())
+                   AND NOT EXISTS (
+                       SELECT 1 FROM premium_upsell_notifications pun
+                        WHERE pun.user_id = u.id
+                          AND DATE(pun.sent_at AT TIME ZONE 'UTC') = CURRENT_DATE
+                   )
+                 GROUP BY u.id
+            """)
+            rows = cur.fetchall()
+            if not rows:
+                _log.info('Premium upsell: no eligible free users today')
+                return
+            all_player_ids = [pid for _, pids in rows for pid in pids]
+            user_ids       = [r[0] for r in rows]
+            # OneSignal limit: 2000 player IDs per call
+            for i in range(0, len(all_player_ids), 2000):
+                _onesignal_send({
+                    'include_player_ids': all_player_ids[i:i+2000],
+                    'headings': {'en': '👑 Unlock VIP Predictions'},
+                    'contents': {'en': 'Get Daily Accumulator, VIP Tips & match alerts — ₦5,000/month'},
+                    'url':      f'{_APP_URL}/subscribe',
+                })
+            now = datetime.now(timezone.utc)
+            cur.executemany(
+                'INSERT INTO premium_upsell_notifications (user_id, sent_at) VALUES (%s, %s)',
+                [(uid, now) for uid in user_ids]
+            )
+            _log.info('Premium upsell sent to %d free users', len(user_ids))
+    except Exception as e:
+        _log.warning('_send_premium_upsell: %s', e)
 
 
 def _get_current_user():
@@ -4114,6 +4362,39 @@ def update_saved_prediction(saved_id):
         return jsonify({'error': str(e)}), 500
 
 
+# ── Public config (safe to expose) ───────────────────────────────────────────
+
+@app.route('/api/config')
+def get_config():
+    return jsonify({'onesignal_app_id': _ONESIGNAL_APP_ID})
+
+
+# ── Notification token registration ──────────────────────────────────────────
+
+@app.route('/api/user/notification-token', methods=['POST'])
+def save_notification_token():
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data      = request.get_json(silent=True) or {}
+    player_id = (data.get('player_id') or '').strip()
+    if not player_id:
+        return jsonify({'error': 'player_id is required'}), 400
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database unavailable'}), 503
+            cur.execute("""
+                INSERT INTO notification_tokens (user_id, onesignal_player_id)
+                VALUES (%s, %s)
+                ON CONFLICT (user_id, onesignal_player_id) DO NOTHING
+            """, (user['id'], player_id))
+            return jsonify({'success': True})
+    except Exception as e:
+        _log.error('save_notification_token: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 # ── Payment endpoints (Korapay) ───────────────────────────────────────────────
 
 _KORA_INIT_URL   = 'https://api.korapay.com/merchant/api/v1/charges/initialize'
@@ -4251,6 +4532,7 @@ def index():
 @app.route('/subscribe')
 @app.route('/login')
 @app.route('/register')
+@app.route('/saved')
 @app.route('/admin')
 def spa_pages():
     return _serve_index()
@@ -4296,6 +4578,14 @@ try:
                        id='basketball_checker', misfire_grace_time=120)
     _scheduler.add_job(_refresh_caches, 'interval', hours=6,
                        id='cache_refresh', misfire_grace_time=300)
+    _scheduler.add_job(_notify_kickoff,         'interval', minutes=10,
+                       id='notify_kickoff',      misfire_grace_time=60)
+    _scheduler.add_job(_notify_results,         'interval', minutes=5,
+                       id='notify_results',      misfire_grace_time=60)
+    _scheduler.add_job(_notify_won_predictions, 'interval', minutes=10,
+                       id='notify_won',          misfire_grace_time=60)
+    _scheduler.add_job(_send_premium_upsell,    'cron',     hour=9, minute=0,
+                       id='premium_upsell',      misfire_grace_time=3600)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))

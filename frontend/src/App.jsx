@@ -147,7 +147,7 @@ function Header({ auth, onLogout, navigate }) {
             <button className="nav-btn nav-saved" onClick={() => navigate('/saved')} title="Your saved predictions">
               🔖 Saved
             </button>
-            <button className="nav-btn" onClick={onLogout}>Log out</button>
+            <button className="nav-btn nav-logout" onClick={onLogout}>Log out</button>
           </div>
         ) : (
           <div className="user-area">

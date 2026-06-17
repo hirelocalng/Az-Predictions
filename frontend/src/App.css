@@ -1927,7 +1927,24 @@ body::after {
 .saved-premium-banner .btn-primary { white-space: nowrap; flex-shrink: 0; padding: 9px 16px; }
 
 /* nav saved button */
-.nav-saved { font-size: 0.78rem; }
+.nav-saved {
+  border-color: var(--border-hi) !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+}
+.nav-saved:hover {
+  background: rgba(255,255,255,0.08) !important;
+}
+
+/* nav logout button */
+.nav-logout {
+  border-color: var(--border-hi) !important;
+  color: var(--text) !important;
+  font-weight: 600 !important;
+}
+.nav-logout:hover {
+  background: rgba(255,255,255,0.08) !important;
+}
 
 @media (max-width: 480px) {
   .saved-stat-num   { font-size: 1.1rem; }

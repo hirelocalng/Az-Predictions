@@ -232,6 +232,20 @@ def _init_db():
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_saved_predictions_status ON saved_predictions(status)"
             )
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS admin_notifications (
+                    id                SERIAL PRIMARY KEY,
+                    title             VARCHAR(255) NOT NULL,
+                    message           TEXT NOT NULL,
+                    recipient_type    VARCHAR(20) NOT NULL,
+                    recipient_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    sent_count        INTEGER DEFAULT 0,
+                    sent_at           TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_admin_notifs_sent ON admin_notifications(sent_at DESC)"
+            )
             # ── Notification tables ───────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS notification_tokens (
@@ -4395,6 +4409,129 @@ def save_notification_token():
         return jsonify({'error': str(e)}), 500
 
 
+# ── Admin push notification endpoints ────────────────────────────────────────
+
+_VALID_RECIPIENT_TYPES = ('all', 'free', 'premium', 'specific')
+
+
+@app.route('/api/admin/send-notification', methods=['POST'])
+@_require_admin
+def admin_send_notification():
+    data           = request.get_json(silent=True) or {}
+    title          = (data.get('title') or '').strip()
+    message        = (data.get('message') or '').strip()
+    recipient_type = (data.get('recipientType') or 'all').strip()
+    user_id        = data.get('userId')
+
+    if not title or not message:
+        return jsonify({'error': 'title and message are required'}), 400
+    if recipient_type not in _VALID_RECIPIENT_TYPES:
+        return jsonify({'error': f'recipientType must be one of {_VALID_RECIPIENT_TYPES}'}), 400
+    if recipient_type == 'specific' and not user_id:
+        return jsonify({'error': 'userId is required for specific recipient'}), 400
+    if not _ONESIGNAL_APP_ID:
+        return jsonify({'error': 'OneSignal not configured — set ONESIGNAL_APP_ID env var'}), 503
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database unavailable'}), 503
+
+            player_ids: list = []
+            if recipient_type == 'free':
+                cur.execute("""
+                    SELECT DISTINCT nt.onesignal_player_id
+                      FROM notification_tokens nt
+                      JOIN users u ON nt.user_id = u.id
+                     WHERE u.is_premium = FALSE
+                        OR u.premium_until IS NULL
+                        OR u.premium_until < NOW()
+                """)
+                player_ids = [r[0] for r in cur.fetchall()]
+            elif recipient_type == 'premium':
+                cur.execute("""
+                    SELECT DISTINCT nt.onesignal_player_id
+                      FROM notification_tokens nt
+                      JOIN users u ON nt.user_id = u.id
+                     WHERE u.is_premium = TRUE
+                       AND u.premium_until IS NOT NULL
+                       AND u.premium_until > NOW()
+                """)
+                player_ids = [r[0] for r in cur.fetchall()]
+            elif recipient_type == 'specific':
+                cur.execute(
+                    'SELECT onesignal_player_id FROM notification_tokens WHERE user_id = %s',
+                    (int(user_id),)
+                )
+                player_ids = [r[0] for r in cur.fetchall()]
+
+            # Build OneSignal payload
+            if recipient_type == 'all':
+                os_payload = {'included_segments': ['Subscribed Users']}
+                sent_count = -1  # segment size unknown; -1 = "all"
+            else:
+                if not player_ids:
+                    return jsonify({'success': True, 'sent_count': 0,
+                                    'message': 'No subscribed devices found for this audience'}), 200
+                os_payload = {'include_player_ids': player_ids[:2000]}
+                sent_count = len(player_ids)
+
+            os_payload.update({
+                'headings': {'en': title},
+                'contents': {'en': message},
+                'url':      _APP_URL,
+            })
+
+            ok = _onesignal_send(os_payload)
+            if not ok:
+                return jsonify({'error': 'OneSignal API call failed — check ONESIGNAL_REST_API_KEY'}), 500
+
+            cur.execute("""
+                INSERT INTO admin_notifications
+                    (title, message, recipient_type, recipient_user_id, sent_count)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (title, message, recipient_type,
+                  int(user_id) if recipient_type == 'specific' and user_id else None,
+                  max(sent_count, 0)))
+            notif_id = cur.fetchone()[0]
+
+        label = 'all subscribed users' if recipient_type == 'all' else f'{sent_count} device(s)'
+        return jsonify({'success': True, 'sent_count': sent_count,
+                        'notification_id': notif_id, 'message': f'Sent to {label}'})
+    except Exception as e:
+        _log.error('admin_send_notification: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/notification-history')
+@_require_admin
+def admin_notification_history():
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'notifications': []})
+            cur.execute("""
+                SELECT n.id, n.title, n.message, n.recipient_type,
+                       n.sent_count, n.sent_at,
+                       u.email AS recipient_user_email
+                  FROM admin_notifications n
+                  LEFT JOIN users u ON n.recipient_user_id = u.id
+                 ORDER BY n.sent_at DESC
+                 LIMIT 100
+            """)
+            cols = [d[0] for d in cur.description]
+            rows = []
+            for r in cur.fetchall():
+                row = dict(zip(cols, r))
+                if row.get('sent_at'):
+                    row['sent_at'] = row['sent_at'].isoformat()
+                rows.append(row)
+            return jsonify({'notifications': rows})
+    except Exception as e:
+        _log.error('admin_notification_history: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 # ── Payment endpoints (Korapay) ───────────────────────────────────────────────
 
 _KORA_INIT_URL   = 'https://api.korapay.com/merchant/api/v1/charges/initialize'
@@ -4534,6 +4671,8 @@ def index():
 @app.route('/register')
 @app.route('/saved')
 @app.route('/admin')
+@app.route('/admin/subscribers')
+@app.route('/admin/push-notifications')
 def spa_pages():
     return _serve_index()
 

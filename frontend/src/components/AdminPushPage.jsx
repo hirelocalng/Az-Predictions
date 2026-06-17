@@ -33,34 +33,31 @@ export default function AdminPushPage({ navigate }) {
   const [sending, setSending] = useState(false)
   const [history, setHistory] = useState([])
 
-  const headers = useCallback(() => ({
-    'Content-Type': 'application/json',
-    'X-Admin-Password': pw,
-  }), [pw])
+  const loadHistory = useCallback(async (password) => {
+    const r = await fetch('/api/admin/notification-history', {
+      headers: { 'X-Admin-Password': password },
+    })
+    if (r.status === 403 || r.status === 503) {
+      setAuthed(false)
+      sessionStorage.removeItem('az_admin_pw')
+      setLoginMsg('Wrong password or admin not configured.')
+      return false
+    }
+    const d = await r.json()
+    if (d.error) { setLoginMsg(d.error); return false }
+    setHistory(d.notifications || [])
+    setAuthed(true)
+    sessionStorage.setItem('az_admin_pw', password)
+    setLoginMsg('')
+    return true
+  }, [])
 
-  const loadHistory = useCallback(async (password = pw) => {
-    try {
-      const r = await fetch(`/api/admin/notification-history?admin_pw=${encodeURIComponent(password)}`)
-      if (r.status === 403 || r.status === 503) {
-        setAuthed(false)
-        sessionStorage.removeItem('az_admin_pw')
-        return false
-      }
-      const d = await r.json()
-      setHistory(d.notifications || [])
-      setAuthed(true)
-      sessionStorage.setItem('az_admin_pw', password)
-      return true
-    } catch { return false }
-  }, [pw])
-
-  useEffect(() => { if (pw) loadHistory() }, [])
+  useEffect(() => { if (pw) loadHistory(pw) }, [])
 
   const login = async e => {
     e.preventDefault()
     setLoginMsg('')
-    const ok = await loadHistory(pw)
-    if (!ok) setLoginMsg('Wrong password or admin not configured.')
+    await loadHistory(pw)
   }
 
   const field = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
@@ -73,7 +70,9 @@ export default function AdminPushPage({ navigate }) {
       const body = { title: form.title, message: form.message, recipientType: form.recipientType }
       if (form.recipientType === 'specific') body.userId = parseInt(form.userId, 10)
       const r = await fetch('/api/admin/send-notification', {
-        method: 'POST', headers: headers(), body: JSON.stringify(body),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Admin-Password': pw },
+        body: JSON.stringify(body),
       })
       const d = await r.json()
       if (!r.ok) { setSendMsg('❌ ' + (d.error || `Error ${r.status}`)); return }

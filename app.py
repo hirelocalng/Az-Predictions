@@ -210,7 +210,25 @@ def _init_db():
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_odds_tips_date ON odds_tips(date, tier)"
             )
-        print('DB init: all tables ready (predictions, users, sessions, analytics_logs, odds_tips) ✓', flush=True)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS saved_predictions (
+                    id            SERIAL PRIMARY KEY,
+                    user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    prediction_id INTEGER NOT NULL REFERENCES predictions(id) ON DELETE CASCADE,
+                    status        VARCHAR(20) DEFAULT 'pending'
+                                      CHECK (status IN ('pending','won','lost')),
+                    match_result  TEXT,
+                    saved_at      TIMESTAMPTZ DEFAULT NOW(),
+                    UNIQUE(user_id, prediction_id)
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_saved_predictions_user_id ON saved_predictions(user_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_saved_predictions_status ON saved_predictions(status)"
+            )
+        print('DB init: all tables ready (predictions, users, sessions, analytics_logs, odds_tips, saved_predictions) ✓', flush=True)
         _log.info('DB: all tables ready')
     except Exception as e:
         print(f'DB init FAILED: {e}', flush=True)
@@ -461,6 +479,22 @@ def _completed_keys():
     data = _get_history()
     return {p['match_id'] for p in data.get('predictions', [])
             if p['result_status'] in ('WON', 'LOST')}
+
+
+def _sync_saved_statuses(cur):
+    """Propagate WON/LOST from predictions → saved_predictions (called after result updates)."""
+    try:
+        cur.execute("""
+            UPDATE saved_predictions sp
+               SET status       = CASE WHEN p.result_status = 'WON' THEN 'won' ELSE 'lost' END,
+                   match_result = CONCAT(p.actual_home_score, '-', p.actual_away_score)
+              FROM predictions p
+             WHERE sp.prediction_id = p.id
+               AND p.result_status IN ('WON', 'LOST')
+               AND sp.status = 'pending'
+        """)
+    except Exception as e:
+        _log.warning('_sync_saved_statuses: %s', e)
 
 
 def _get_current_user():
@@ -1769,6 +1803,7 @@ def _check_basketball_results():
                     resolved += 1
                 _log.info('Basketball results check done: %d resolved', resolved)
                 if resolved > 0:
+                    _sync_saved_statuses(cur)
                     _BEST_BET_CACHE["data"] = None
                     _DAILY_TIPS_CACHE["ts"] = 0
     except Exception as e:
@@ -1834,6 +1869,7 @@ def _check_pending_results():
                     resolved += 1
                 _log.info('Results check done: %d resolved', resolved)
                 if resolved > 0:
+                    _sync_saved_statuses(cur)
                     _DAILY_TIPS_CACHE["ts"] = 0
                     _BEST_BET_CACHE["data"] = None
                 return
@@ -3953,6 +3989,129 @@ def auth_me():
     if not user:
         return jsonify({'error': 'Unauthorized'}), 401
     return jsonify({'user': user})
+
+
+# ── Saved predictions endpoints ───────────────────────────────────────────────
+
+@app.route('/api/predictions/<path:match_id>/save', methods=['POST'])
+def save_prediction(match_id):
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database unavailable'}), 503
+            cur.execute('SELECT id FROM predictions WHERE match_id=%s', (match_id,))
+            row = cur.fetchone()
+            if not row:
+                return jsonify({'error': 'Prediction not found'}), 404
+            pred_id = row[0]
+            cur.execute(
+                'SELECT id FROM saved_predictions WHERE user_id=%s AND prediction_id=%s',
+                (user['id'], pred_id)
+            )
+            existing = cur.fetchone()
+            if existing:
+                cur.execute('DELETE FROM saved_predictions WHERE id=%s', (existing[0],))
+                return jsonify({'saved': False})
+            else:
+                cur.execute(
+                    'INSERT INTO saved_predictions (user_id, prediction_id) VALUES (%s, %s)',
+                    (user['id'], pred_id)
+                )
+                return jsonify({'saved': True}), 201
+    except Exception as e:
+        _log.error('save_prediction: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/predictions/<path:match_id>/is-saved')
+def is_prediction_saved(match_id):
+    user = _get_current_user()
+    if not user:
+        return jsonify({'saved': False})
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'saved': False})
+            cur.execute("""
+                SELECT 1 FROM saved_predictions sp
+                JOIN predictions p ON sp.prediction_id = p.id
+                WHERE sp.user_id=%s AND p.match_id=%s
+            """, (user['id'], match_id))
+            return jsonify({'saved': cur.fetchone() is not None})
+    except Exception as e:
+        _log.warning('is_prediction_saved: %s', e)
+        return jsonify({'saved': False})
+
+
+@app.route('/api/user/saved-predictions')
+def user_saved_predictions():
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database unavailable'}), 503
+            cur.execute("""
+                SELECT sp.id, sp.status, sp.match_result, sp.saved_at,
+                       p.match_id, p.home_team, p.away_team, p.match_date,
+                       p.match_time, p.competition, p.predicted_winner,
+                       p.predicted_goals, p.predicted_btts, p.result_status,
+                       p.kickoff_utc, p.prediction_payload
+                  FROM saved_predictions sp
+                  JOIN predictions p ON sp.prediction_id = p.id
+                 WHERE sp.user_id = %s
+                 ORDER BY sp.saved_at DESC
+            """, (user['id'],))
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+            # Coerce non-serialisable types
+            for r in rows:
+                if r.get('saved_at'):
+                    r['saved_at'] = r['saved_at'].isoformat()
+            total   = len(rows)
+            won     = sum(1 for r in rows if r['status'] == 'won')
+            lost    = sum(1 for r in rows if r['status'] == 'lost')
+            pending = sum(1 for r in rows if r['status'] == 'pending')
+            win_rate = round(won / (won + lost) * 100, 1) if (won + lost) > 0 else 0
+            return jsonify({
+                'predictions': rows,
+                'stats': {
+                    'total': total, 'won': won, 'lost': lost,
+                    'pending': pending, 'win_rate': win_rate,
+                },
+            })
+    except Exception as e:
+        _log.error('user_saved_predictions: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/user/saved-predictions/<int:saved_id>', methods=['PATCH'])
+def update_saved_prediction(saved_id):
+    user = _get_current_user()
+    if not user:
+        return jsonify({'error': 'Unauthorized'}), 401
+    data   = request.get_json(silent=True) or {}
+    status = data.get('status', '')
+    if status not in ('pending', 'won', 'lost'):
+        return jsonify({'error': 'status must be pending, won, or lost'}), 400
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database unavailable'}), 503
+            cur.execute(
+                'UPDATE saved_predictions SET status=%s WHERE id=%s AND user_id=%s RETURNING id',
+                (status, saved_id, user['id'])
+            )
+            if not cur.fetchone():
+                return jsonify({'error': 'Not found'}), 404
+            return jsonify({'success': True})
+    except Exception as e:
+        _log.error('update_saved_prediction: %s', e)
+        return jsonify({'error': str(e)}), 500
 
 
 # ── Payment endpoints (Korapay) ───────────────────────────────────────────────

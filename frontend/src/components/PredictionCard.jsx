@@ -1,4 +1,5 @@
 import { useLiveScores } from '../contexts/LiveScoresContext.jsx'
+import SavePredictionButton from './SavePredictionButton.jsx'
 
 function pct(v) { return v != null ? `${(v * 100).toFixed(1)}%` : '—' }
 
@@ -88,16 +89,19 @@ export default function PredictionCard({ tip, isWC }) {
       {/* Header */}
       <div className="card-header">
         <span className="card-league" title={league}>{league || 'Football'}</span>
-        {isLive
-          ? <div className="live-badge">
-              <span className="live-pulse" />
-              <span className="live-label">LIVE</span>
-              {liveData?.live_home_score != null &&
-                <span className="live-score-inline">{liveData.live_home_score}–{liveData.live_away_score}</span>}
-              {liveData?.live_minute && <span className="live-minute-inline">{liveData.live_minute}'</span>}
-            </div>
-          : <span className="card-time">{timeDisplay}</span>
-        }
+        <div className="card-header-right">
+          {isLive
+            ? <div className="live-badge">
+                <span className="live-pulse" />
+                <span className="live-label">LIVE</span>
+                {liveData?.live_home_score != null &&
+                  <span className="live-score-inline">{liveData.live_home_score}–{liveData.live_away_score}</span>}
+                {liveData?.live_minute && <span className="live-minute-inline">{liveData.live_minute}'</span>}
+              </div>
+            : <span className="card-time">{timeDisplay}</span>
+          }
+          <SavePredictionButton matchId={matchId} />
+        </div>
       </div>
 
       {/* Teams */}

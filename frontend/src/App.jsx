@@ -12,6 +12,7 @@ import AdminSubscribersPage from './components/AdminSubscribersPage.jsx'
 import LoginPage from './components/LoginPage.jsx'
 import RegisterPage from './components/RegisterPage.jsx'
 import SubscribePage from './components/SubscribePage.jsx'
+import SavedPredictionsPage from './components/SavedPredictionsPage.jsx'
 import { LiveScoresContext } from './contexts/LiveScoresContext.jsx'
 import { AuthContext } from './contexts/AuthContext.jsx'
 
@@ -21,6 +22,7 @@ const pathToPage = p => {
   if (p === '/login')     return 'login'
   if (p === '/register')  return 'register'
   if (p === '/subscribe') return 'subscribe'
+  if (p === '/saved')              return 'saved'
   if (p === '/admin')              return 'admin'
   if (p === '/admin/subscribers') return 'admin-subscribers'
   return 'home'
@@ -142,6 +144,9 @@ function Header({ auth, onLogout, navigate }) {
               ? <span className="premium-badge" title="Premium member">👑 Premium</span>
               : <button className="nav-btn nav-upgrade" onClick={() => navigate('/subscribe')}>Upgrade</button>
             }
+            <button className="nav-btn nav-saved" onClick={() => navigate('/saved')} title="Your saved predictions">
+              🔖 Saved
+            </button>
             <button className="nav-btn" onClick={onLogout}>Log out</button>
           </div>
         ) : (
@@ -268,6 +273,8 @@ export default function App() {
     return <RegisterPage navigate={navigate} onAuth={saveAuth} />
   if (page === 'subscribe')
     return <SubscribePage navigate={navigate} auth={auth} onAuth={saveAuth} />
+  if (page === 'saved')
+    return <SavedPredictionsPage navigate={navigate} auth={auth} />
   if (page === 'admin')
     return <AdminPage navigate={navigate} />
   if (page === 'admin-subscribers')

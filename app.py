@@ -1643,8 +1643,15 @@ _TSDB_URL = 'https://www.thesportsdb.com/api/v1/json/3/eventsday.php'
 
 
 def _team_similar(a, b):
-    a, b = a.lower().strip(), b.lower().strip()
+    def _norm(s):
+        s = s.lower().strip()
+        return _TEAM_ALIASES.get(s, s).lower()
+    a, b = _norm(a), _norm(b)
     if a == b or a in b or b in a:
+        return True
+    # Word-order-independent match — providers disagree on order for multi-word
+    # names (ESPN calls it "Congo DR", everywhere else uses "DR Congo").
+    if set(a.split()) == set(b.split()):
         return True
     return difflib.SequenceMatcher(None, a, b).ratio() > 0.72
 
@@ -2074,8 +2081,10 @@ def _check_basketball_results():
                     _sync_saved_statuses(cur)
                     _BEST_BET_CACHE["data"] = None
                     _DAILY_TIPS_CACHE["ts"] = 0
+        return resolved
     except Exception as e:
         _log.warning('Basketball results check failed: %s', e)
+        return resolved
 
 
 def _check_pending_results():
@@ -2140,7 +2149,7 @@ def _check_pending_results():
                     _sync_saved_statuses(cur)
                     _DAILY_TIPS_CACHE["ts"] = 0
                     _BEST_BET_CACHE["data"] = None
-                return
+                return resolved
     except Exception as e:
         _log.warning('DB check_pending failed, falling back to JSON: %s', e)
 
@@ -2148,6 +2157,7 @@ def _check_pending_results():
     with _HISTORY_LOCK:
         data = _read_raw_history()
         changed = False
+        json_resolved = 0
         for pred in data['predictions']:
             if pred['result_status'] not in ('PENDING', 'LIVE'):
                 continue
@@ -2177,11 +2187,24 @@ def _check_pending_results():
                 pred['home_team'], pred['away_team'], hs, as_,
                 actual_corners=corners)
             changed = True
+            json_resolved += 1
             _log.info('JSON result: %s %d-%d %s → %s (corners=%s)',
                       pred['home_team'], hs, as_, pred['away_team'],
                       pred['result_status'], corners)
         if changed:
             _write_raw_history(data)
+        return json_resolved
+
+
+def _daily_results_cleanup():
+    """Daily 2 AM UTC sweep — safety net behind the 30-min checkers above,
+    in case a game's result lands late (provider delay, rate limit, etc.)."""
+    _log.info('Daily results cleanup: running football + basketball checks…')
+    football   = _check_pending_results() or 0
+    basketball = _check_basketball_results() or 0
+    _log.info('Daily results cleanup done: %d football, %d basketball resolved',
+               football, basketball)
+    return {'football_resolved': football, 'basketball_resolved': basketball}
 
 # ── ESPN live-score polling ───────────────────────────────────────────────────
 
@@ -3588,6 +3611,81 @@ def admin_re_resolve_stale():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/admin/sync-scores', methods=['GET', 'POST'])
+@_require_admin
+def admin_sync_scores():
+    """
+    Manual score sync — same checkers the scheduler runs (30-min interval
+    + the 2 AM UTC daily cleanup), triggered on demand for an immediate update.
+
+    GET  → preview: counts of PENDING/LIVE predictions awaiting a result.
+    POST → run the sync now (football + basketball) and report what changed.
+    """
+    if request.method == 'GET':
+        if not _DB_CONN_URL:
+            return jsonify({'error': 'DB not configured'}), 503
+        try:
+            with _db() as (conn, cur):
+                if conn is None:
+                    return jsonify({'error': 'DB unavailable'}), 503
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, match_date,
+                           result_status, COALESCE(sport, 'football') AS sport
+                    FROM predictions
+                    WHERE result_status IN ('PENDING', 'LIVE')
+                    ORDER BY match_date DESC
+                """)
+                rows = cur.fetchall()
+                pending = [{'match_id': r[0], 'teams': f'{r[1]} vs {r[2]}',
+                            'date': str(r[3]), 'status': r[4], 'sport': r[5]}
+                           for r in rows]
+                return jsonify({
+                    'action': 'preview — POST to run sync now',
+                    'pending_count': len(pending),
+                    'pending': pending[:25],
+                })
+        except Exception as e:
+            _log.exception('admin_sync_scores GET: %s', e)
+            return jsonify({'error': str(e)}), 500
+
+    # POST — run it now
+    try:
+        before = None
+        if _DB_CONN_URL:
+            try:
+                with _db() as (conn, cur):
+                    if conn is not None:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM predictions WHERE result_status IN ('PENDING','LIVE')")
+                        before = cur.fetchone()[0]
+            except Exception:
+                before = None
+
+        summary = _daily_results_cleanup()
+
+        after = None
+        if _DB_CONN_URL:
+            try:
+                with _db() as (conn, cur):
+                    if conn is not None:
+                        cur.execute(
+                            "SELECT COUNT(*) FROM predictions WHERE result_status IN ('PENDING','LIVE')")
+                        after = cur.fetchone()[0]
+            except Exception:
+                after = None
+
+        return jsonify({
+            'football_resolved':   summary['football_resolved'],
+            'basketball_resolved': summary['basketball_resolved'],
+            'total_resolved':      summary['football_resolved'] + summary['basketball_resolved'],
+            'pending_before': before,
+            'pending_after':  after,
+        })
+    except Exception as e:
+        _log.exception('admin_sync_scores POST: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/admin/fix-history-records', methods=['GET', 'POST'])
 @_require_admin
 def admin_fix_history_records():
@@ -4737,10 +4835,13 @@ try:
                        id='notify_won',          misfire_grace_time=60)
     _scheduler.add_job(_send_premium_upsell,    'cron',     hour=9, minute=0,
                        id='premium_upsell',      misfire_grace_time=3600)
+    _scheduler.add_job(_daily_results_cleanup,  'cron',     hour=2, minute=0,
+                       timezone='UTC', id='daily_results_cleanup',
+                       misfire_grace_time=3600)
     _scheduler.start()
     import atexit as _atexit
     _atexit.register(lambda: _scheduler.shutdown(wait=False))
-    _log.info('APScheduler started — live/2 min, results/30 min, cache/6 h')
+    _log.info('APScheduler started — live/2 min, results/30 min, daily cleanup/2am UTC, cache/6 h')
     try:
         _check_pending_results()
     except Exception as _cpr_err:

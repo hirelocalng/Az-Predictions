@@ -30,6 +30,16 @@
           serviceWorkerParam: { scope: "/" },
           allowLocalhostAsSecureOrigin: true,
         });
+        // Cache subscription ID immediately and on every change so it's
+        // available even before the user logs in (anonymous subscribers).
+        function cacheSubId() {
+          var id = OneSignal.User && OneSignal.User.PushSubscription && OneSignal.User.PushSubscription.id;
+          if (id) localStorage.setItem('os_sub_id', id);
+        }
+        cacheSubId();
+        try {
+          OneSignal.User.PushSubscription.addEventListener('change', cacheSubId);
+        } catch(e) {}
         // Prompt all visitors for push permission (slidedown UI)
         try { await OneSignal.Slidedown.promptPush(); } catch(e) {}
       });
@@ -49,7 +59,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet" />
-    <script type="module" crossorigin src="/assets/index-DqRQOxAZ.js"></script>
+    <script type="module" crossorigin src="/assets/index-D9b0CrDq.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-C3Rk11Uv.css">
   </head>
   <body>

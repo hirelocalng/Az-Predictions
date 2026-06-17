@@ -16,16 +16,23 @@ export function initOneSignal() {}
 export function oneSignalLogin(userId, token) {
   _push(async (OneSignal) => {
     try {
-      // Link this browser to the logged-in user
+      // Register change listener BEFORE login() so we catch the subscription
+      // update that login() triggers (race condition fix).
+      try {
+        OneSignal.User.PushSubscription.addEventListener('change', () =>
+          _saveSubscriptionId(token)
+        )
+      } catch (_) {}
+
+      // Link this browser's subscription to the logged-in user
       await OneSignal.login(String(userId))
-      // Show the permission slidedown prompt
-      try { await OneSignal.Slidedown.promptPush() } catch (_) {}
-      // Save the subscription ID to our backend
+
+      // Try to save immediately — ID may already be populated
       await _saveSubscriptionId(token)
-      // Re-save whenever subscription state changes (permission granted later, etc.)
-      OneSignal.User.PushSubscription.addEventListener('change', () =>
-        _saveSubscriptionId(token)
-      )
+
+      // Retry after 800ms: PushSubscription.id is populated async after login()
+      // and may be null on the first read above.
+      setTimeout(() => _saveSubscriptionId(token), 800)
     } catch (e) {
       console.warn('[OneSignal] login:', e)
     }
@@ -41,9 +48,17 @@ export function oneSignalLogout() {
 async function _saveSubscriptionId(token) {
   if (!token) return
   try {
-    const id      = window.OneSignal?.User?.PushSubscription?.id
+    // Primary: live subscription ID from SDK
+    let id = window.OneSignal?.User?.PushSubscription?.id
+    // Fallback: ID cached to localStorage by the init block (covers anonymous
+    // subscribers who clicked Allow before logging in)
+    if (!id) id = localStorage.getItem('os_sub_id')
+    if (!id) return
+
     const optedIn = window.OneSignal?.User?.PushSubscription?.optedIn
-    if (!id || !optedIn) return
+    // If we have a cached ID but the live optedIn is explicitly false, skip
+    if (optedIn === false) return
+
     await fetch('/api/user/notification-token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },

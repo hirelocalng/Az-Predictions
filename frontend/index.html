@@ -30,6 +30,16 @@
           serviceWorkerParam: { scope: "/" },
           allowLocalhostAsSecureOrigin: true,
         });
+        // Cache subscription ID immediately and on every change so it's
+        // available even before the user logs in (anonymous subscribers).
+        function cacheSubId() {
+          var id = OneSignal.User && OneSignal.User.PushSubscription && OneSignal.User.PushSubscription.id;
+          if (id) localStorage.setItem('os_sub_id', id);
+        }
+        cacheSubId();
+        try {
+          OneSignal.User.PushSubscription.addEventListener('change', cacheSubId);
+        } catch(e) {}
         // Prompt all visitors for push permission (slidedown UI)
         try { await OneSignal.Slidedown.promptPush(); } catch(e) {}
       });

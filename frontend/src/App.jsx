@@ -239,16 +239,9 @@ export default function App() {
     return () => window.removeEventListener('popstate', handlePop)
   }, [])
 
-  // OneSignal — initialise once on mount using App ID from backend
-  const osInitRef = useRef(false)
-  useEffect(() => {
-    if (osInitRef.current) return
-    osInitRef.current = true
-    fetch('/api/config')
-      .then(r => r.json())
-      .then(cfg => initOneSignal(cfg.onesignal_app_id))
-      .catch(() => {})
-  }, [])
+  // OneSignal — SDK is initialised by the <script> block in index.html;
+  // call our no-op so imports stay consistent.
+  useEffect(() => { initOneSignal() }, [])
 
   // OneSignal — login/logout whenever auth state changes
   useEffect(() => {

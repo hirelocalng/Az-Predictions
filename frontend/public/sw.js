@@ -1,6 +1,10 @@
-/* AZ Prediction — Service Worker v3 */
+/* AZ Prediction — Service Worker v4 */
 
-const CACHE = 'az-predict-v3';
+// OneSignal must be imported first so its push/notificationclick handlers
+// are registered before any other SW code runs.
+importScripts('https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.sw.js');
+
+const CACHE = 'az-predict-v4';
 
 // Pre-cache the app shell (hashed Vite assets are cached at runtime below)
 const PRECACHE = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];

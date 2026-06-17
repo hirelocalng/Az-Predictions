@@ -4683,6 +4683,12 @@ def spa_pages():
     return _serve_index()
 
 
+@app.route('/default-icon')
+def default_icon():
+    """OneSignal v16 fetches /default-icon as the notification icon fallback."""
+    return send_from_directory(DIST, 'icon-192.png')
+
+
 @app.route('/assets/<path:filename>')
 def serve_assets(filename):
     return send_from_directory(os.path.join(DIST, 'assets'), filename)

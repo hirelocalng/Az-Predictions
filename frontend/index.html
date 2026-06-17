@@ -27,6 +27,7 @@
       OneSignalDeferred.push(async function(OneSignal) {
         await OneSignal.init({
           appId: "15961974-7c73-430f-a7f4-23a69f27f7b8",
+          serviceWorkerPath: "sw.js",
           serviceWorkerParam: { scope: "/" },
           allowLocalhostAsSecureOrigin: true,
         });

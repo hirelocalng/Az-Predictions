@@ -197,6 +197,8 @@ function Header({ auth, onLogout, navigate }) {
 function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, onOdds, navigate }) {
   return (
     <section className="hero">
+      <div className="hero-bg" />
+      <div className="hero-overlay" />
       <div className="hero-eyebrow">AI-Powered Match Predictions</div>
       <h1 className="hero-title">
         The Smartest<br />

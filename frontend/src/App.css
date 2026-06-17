@@ -215,11 +215,75 @@ body::after {
 
 /* ── Hero ──────────────────────────────────────────────────────────────────── */
 .hero {
+  position: relative;
   min-height: 100vh;
   display: flex; flex-direction: column;
   align-items: center; justify-content: center;
   text-align: center; padding: 88px 24px 64px;
+  overflow: hidden;
 }
+
+/* Background photo — oversized + slow Ken Burns zoom/pan for a subtle
+   parallax feel without the iOS background-attachment:fixed bugs. */
+.hero-bg {
+  position: absolute;
+  inset: -8%;
+  z-index: 0;
+  background-image: url('https://images.unsplash.com/photo-1748150572481-13ce492e1b2b?auto=format&fit=crop&w=2400&q=75');
+  background-size: cover;
+  background-position: center 60%;
+  animation: heroZoom 26s ease-in-out infinite alternate;
+}
+@media (max-width: 600px) {
+  .hero-bg {
+    background-image: url('https://images.unsplash.com/photo-1748150572481-13ce492e1b2b?auto=format&fit=crop&w=900&q=70');
+  }
+}
+@keyframes heroZoom {
+  0%   { transform: scale(1.06) translate3d(0,0,0); }
+  100% { transform: scale(1.18) translate3d(0,-1.5%,0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-bg { animation: none; }
+}
+
+/* Dark gradient overlay — keeps text readable, fades to the page bg at
+   the bottom so the hero blends into the next section. */
+.hero-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    radial-gradient(ellipse 60% 50% at 50% 28%, rgba(0,208,132,0.10), transparent 70%),
+    linear-gradient(180deg,
+      rgba(5,5,8,0.55) 0%,
+      rgba(5,5,8,0.62) 35%,
+      rgba(5,5,8,0.82) 72%,
+      var(--bg) 100%
+    );
+}
+
+.hero-eyebrow,
+.hero-title,
+.hero-desc,
+.hero-actions,
+.hero-metrics {
+  position: relative;
+  z-index: 2;
+}
+
+.hero-title {
+  text-shadow: 0 4px 28px rgba(0,0,0,0.55), 0 1px 3px rgba(0,0,0,0.8);
+}
+
+/* Outline buttons need more contrast over a photo than over flat bg */
+.hero .btn-outline {
+  background: rgba(8,8,14,0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-color: rgba(255,255,255,0.18);
+}
+.hero .btn-outline:hover { background: rgba(8,8,14,0.75); }
 
 .hero-eyebrow {
   display: inline-flex; align-items: center; gap: 8px;

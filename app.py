@@ -58,7 +58,7 @@ _HISTORY_LOCK   = threading.Lock()
 _DB_URL         = os.environ.get('DATABASE_URL', '')
 _KORAPAY_SECRET    = os.environ.get('KORAPAY_SECRET_KEY', '')
 _KORAPAY_PUBLIC    = os.environ.get('KORAPAY_PUBLIC_KEY', '')
-_ONESIGNAL_APP_ID  = os.environ.get('ONESIGNAL_APP_ID', '')
+_ONESIGNAL_APP_ID  = os.environ.get('ONESIGNAL_APP_ID', '15961974-7c73-430f-a7f4-23a69f27f7b8')
 _ONESIGNAL_REST_KEY = os.environ.get('ONESIGNAL_REST_API_KEY', '')
 _APP_URL           = os.environ.get('APP_URL', 'https://azpredicts.com')
 
@@ -553,10 +553,11 @@ def _sync_saved_statuses(cur):
 
 # ── OneSignal push notifications ──────────────────────────────────────────────
 
-def _onesignal_send(payload: dict) -> bool:
-    """POST a notification to OneSignal's REST API. Returns True on success."""
-    if not _ONESIGNAL_APP_ID or not _ONESIGNAL_REST_KEY:
-        return False
+def _onesignal_send(payload: dict):
+    """POST a notification to OneSignal's REST API.
+    Returns (True, response_body) on success, (False, error_str) on failure."""
+    if not _ONESIGNAL_REST_KEY:
+        return False, 'ONESIGNAL_REST_API_KEY not set'
     try:
         import requests as _rq
         r = _rq.post(
@@ -568,12 +569,15 @@ def _onesignal_send(payload: dict) -> bool:
             json={'app_id': _ONESIGNAL_APP_ID, **payload},
             timeout=10,
         )
+        body = r.text[:500]
         if not r.ok:
-            _log.warning('OneSignal %s: %s', r.status_code, r.text[:300])
-        return r.ok
+            _log.warning('OneSignal %s: %s', r.status_code, body)
+            return False, f'OneSignal {r.status_code}: {body}'
+        _log.info('OneSignal sent OK: %s', body[:200])
+        return True, body
     except Exception as e:
         _log.warning('OneSignal send error: %s', e)
-        return False
+        return False, str(e)
 
 
 def _notify_kickoff():
@@ -602,7 +606,7 @@ def _notify_kickoff():
             sent_ids = []
             for sp_id, home, away, pred_winner, player_ids in rows:
                 bet = pred_winner or 'your saved bet'
-                ok = _onesignal_send({
+                ok, _ = _onesignal_send({
                     'include_player_ids': player_ids,
                     'headings': {'en': '⚽ Kick-off in 15 minutes!'},
                     'contents': {'en': f'{home} vs {away} — {bet} starts soon'},
@@ -649,7 +653,7 @@ def _notify_results():
                 outcome = 'WON' if status == 'won' else 'Lost'
                 score   = f' ({hs}–{as_})' if hs is not None and as_ is not None else ''
                 bet     = pred_winner or f'{home} vs {away}'
-                ok = _onesignal_send({
+                ok, _ = _onesignal_send({
                     'include_player_ids': player_ids,
                     'headings': {'en': f'{icon} Prediction result'},
                     'contents': {'en': f'{home} vs {away}{score} — {bet} {outcome}'},
@@ -695,7 +699,7 @@ def _notify_won_predictions():
                 icon     = '🏀' if sport in ('nba', 'wnba') else '⚽'
                 conf_str = f' ({confidence*100:.0f}% confidence)' if confidence > 0 else ''
                 bet      = pred_winner or 'Prediction'
-                ok = _onesignal_send({
+                ok, _ = _onesignal_send({
                     'included_segments': ['Subscribed Users'],
                     'headings': {'en': f'✅ {icon} {home} vs {away}'},
                     'contents': {'en': f'{bet} WON{conf_str}'},
@@ -4484,9 +4488,9 @@ def admin_send_notification():
                 'url':      _APP_URL,
             })
 
-            ok = _onesignal_send(os_payload)
+            ok, os_detail = _onesignal_send(os_payload)
             if not ok:
-                return jsonify({'error': 'OneSignal API call failed — check ONESIGNAL_REST_API_KEY'}), 500
+                return jsonify({'error': f'OneSignal API error: {os_detail}'}), 500
 
             cur.execute("""
                 INSERT INTO admin_notifications

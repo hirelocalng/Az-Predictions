@@ -1657,8 +1657,13 @@ def _team_similar(a, b):
 
 
 _TSDB_NOT_DONE = frozenset({
-    'scheduled', 'not started', 'in progress', 'halftime', 'half time',
+    'scheduled', 'not started', 'ns', 'tbd', 'in progress', 'halftime', 'half time',
     'live', 'postponed', 'cancelled', 'suspended', 'abandoned',
+    # TheSportsDB also reports live matches with short clock-style codes —
+    # confirmed live: a finished 6-0 match still read strStatus "2H" hours
+    # after full time, and without these the in-progress score gets accepted
+    # as final and frozen (the periodic checks only ever re-scan PENDING/LIVE rows).
+    '1h', '2h', 'ht', 'et', 'p', 'pen',
 })
 
 
@@ -3793,6 +3798,85 @@ def admin_fix_history_records():
 
     except Exception as e:
         _log.exception('admin_fix_history_records: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/fix-wc-scores', methods=['GET', 'POST'])
+@_require_admin
+def admin_fix_wc_scores():
+    """
+    One-off correction for two WC 2026 records whose score got frozen
+    mid-match: TheSportsDB's strStatus used short live-clock codes ('2H') that
+    _TSDB_NOT_DONE didn't recognize as not-finished, so a snapshot score got
+    saved as final and the row left WON/LOST (never re-scanned, since the
+    periodic checkers only touch PENDING/LIVE rows). Now fixed in
+    _TSDB_NOT_DONE; this corrects the two rows already frozen wrong.
+
+    Verified correct values against ESPN's STATUS_FULL_TIME boxscore (score +
+    wonCorners) on 2026-06-19:
+      - Canada 6-0 Qatar (corners 19+1=20, unchanged — only home/away score was wrong)
+      - Uzbekistan 1-3 Colombia (corners 3+4=7, unchanged — only away score was wrong)
+
+    GET  → diagnostic: current stored values for both match_ids.
+    POST → apply the corrected scores; result_status is re-derived via
+           _resolve_result, not hardcoded. Remove after confirmed.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+
+    # (match_id, correct_home_score, correct_away_score, correct_corners)
+    fixes = [
+        ('2026-06-18/canada/qatar',        6, 0, 20),
+        ('2026-06-18/uzbekistan/colombia', 1, 3, 7),
+    ]
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+
+            cur.execute("""
+                SELECT match_id, home_team, away_team, predicted_winner,
+                       actual_home_score, actual_away_score, actual_corners, result_status
+                FROM predictions
+                WHERE match_id = ANY(%s)
+            """, ([f[0] for f in fixes],))
+            cols = ['match_id', 'home_team', 'away_team', 'predicted_winner',
+                    'actual_home_score', 'actual_away_score', 'actual_corners', 'result_status']
+            before = {row[0]: dict(zip(cols, row)) for row in cur.fetchall()}
+
+            if request.method == 'GET':
+                return jsonify({'action': 'diagnostic — POST to apply', 'before': before})
+
+            applied = []
+            for match_id, hs, as_, corners in fixes:
+                row = before.get(match_id)
+                if not row:
+                    applied.append({'match_id': match_id, 'found': False})
+                    continue
+                new_status = _resolve_result(
+                    row['predicted_winner'] or '', row['home_team'] or '', row['away_team'] or '',
+                    hs, as_, actual_corners=corners)
+                cur.execute("""
+                    UPDATE predictions
+                    SET actual_home_score=%s, actual_away_score=%s, actual_corners=%s,
+                        result_status=%s, match_status='FINISHED'
+                    WHERE match_id=%s
+                """, (hs, as_, corners, new_status, match_id))
+                applied.append({
+                    'match_id': match_id,
+                    'before': row,
+                    'after': {'actual_home_score': hs, 'actual_away_score': as_,
+                              'actual_corners': corners, 'result_status': new_status},
+                })
+
+            _sync_saved_statuses(cur)
+            _BEST_BET_CACHE["data"] = None
+            _DAILY_TIPS_CACHE["ts"] = 0
+            return jsonify({'action': 'fixes applied', 'applied': applied})
+
+    except Exception as e:
+        _log.exception('admin_fix_wc_scores: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

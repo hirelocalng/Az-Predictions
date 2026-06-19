@@ -1898,32 +1898,34 @@ def _resolve_result(pw, home, away, hs, as_, actual_corners=None):
     return 'WON' if 'draw' in pw_l else 'LOST'
 
 
-def _get_nba_game_result(home, away, match_date):
-    """Fetch NBA game result from BallDontLie → TheSportsDB → ESPN."""
-    import requests as _req
-    # BallDontLie (free, misses playoffs/Finals)
+def _bball_search_dates(match_date, max_back=3, max_fwd=1):
+    """
+    Date candidates to query, nearest first. TheSportsDB sometimes corrects a
+    game's scheduled date after we've already stored the original (e.g. a
+    fixture stored as 2026-06-17 turned out to be played 2026-06-14) — without
+    this, the exact-date lookup below would 404/empty forever and the
+    prediction would stay PENDING until the multi-day stale fallback kicks in.
+    """
+    from datetime import date as _date, timedelta as _td
     try:
-        r = _req.get(
-            'https://www.balldontlie.io/api/v1/games',
-            params={'start_date': match_date, 'end_date': match_date, 'per_page': 30},
-            timeout=10,
-        )
-        for g in r.json().get('data', []):
-            ht  = g['home_team']['full_name']
-            at  = g['visitor_team']['full_name']
-            hs  = g.get('home_team_score')
-            as_ = g.get('visitor_team_score')
-            if not hs or not as_:
-                continue
-            if _team_similar(ht, home) and _team_similar(at, away):
-                return int(hs), int(as_)
-    except Exception as e:
-        _log.warning('NBA result BDL: %s', e)
-    # TheSportsDB l=4387 (covers playoffs)
+        d = _date.fromisoformat(str(match_date))
+    except (ValueError, TypeError):
+        return [str(match_date)]
+    out = [str(match_date)]
+    for delta in range(1, max_back + 1):
+        out.append((d - _td(days=delta)).isoformat())
+    for delta in range(1, max_fwd + 1):
+        out.append((d + _td(days=delta)).isoformat())
+    return out
+
+
+def _tsdb_day_result(date_str, league_id, home, away):
+    """Look up one day of TheSportsDB eventsday.php for a home/away match (either order)."""
+    import requests as _req
     try:
         r = _req.get(
             'https://www.thesportsdb.com/api/v1/json/3/eventsday.php',
-            params={'d': match_date, 'l': '4387'},
+            params={'d': date_str, 'l': league_id},
             timeout=10,
         )
         for ev in (r.json().get('events') or []):
@@ -1937,13 +1939,20 @@ def _get_nba_game_result(home, away, match_date):
             ea = ev.get('strAwayTeam', '')
             if _team_similar(eh, home) and _team_similar(ea, away):
                 return int(float(hs_r)), int(float(as_r))
+            if _team_similar(eh, away) and _team_similar(ea, home):
+                return int(float(as_r)), int(float(hs_r))
     except Exception as e:
-        _log.warning('NBA result TSDB: %s', e)
-    # ESPN NBA scoreboard (date-filtered)
+        _log.warning('Basketball TSDB %s (%s): %s', league_id, date_str, e)
+    return None
+
+
+def _espn_bball_day_result(sport_slug, date_str, home, away):
+    """Look up one day of an ESPN basketball scoreboard for a home/away match (either order)."""
+    import requests as _req
     try:
         r = _req.get(
-            'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
-            params={'dates': str(match_date).replace('-', '')},
+            f'https://site.api.espn.com/apis/site/v2/sports/basketball/{sport_slug}/scoreboard',
+            params={'dates': date_str.replace('-', '')},
             timeout=10,
         )
         for ev in (r.json().get('events') or []):
@@ -1964,61 +1973,34 @@ def _get_nba_game_result(home, away, match_date):
                 continue
             if _team_similar(hn, home) and _team_similar(an, away):
                 return int(hs), int(as_)
+            if _team_similar(hn, away) and _team_similar(an, home):
+                return int(as_), int(hs)
     except Exception as e:
-        _log.warning('NBA result ESPN: %s', e)
+        _log.warning('Basketball ESPN %s (%s): %s', sport_slug, date_str, e)
+    return None
+
+
+def _get_nba_game_result(home, away, match_date):
+    """Fetch NBA game result from TheSportsDB → ESPN, scanning nearby dates."""
+    for d in _bball_search_dates(match_date):
+        res = _tsdb_day_result(d, '4387', home, away)  # covers playoffs
+        if res:
+            return res
+        res = _espn_bball_day_result('nba', d, home, away)
+        if res:
+            return res
     return None
 
 
 def _get_wnba_game_result(home, away, match_date):
-    """Fetch WNBA game result from TheSportsDB → ESPN."""
-    import requests as _req
-    # TheSportsDB l=4328
-    try:
-        r = _req.get(
-            'https://www.thesportsdb.com/api/v1/json/3/eventsday.php',
-            params={'d': match_date, 'l': '4328'},
-            timeout=10,
-        )
-        for ev in (r.json().get('events') or []):
-            hs_r = ev.get('intHomeScore')
-            as_r = ev.get('intAwayScore')
-            if hs_r is None or as_r is None:
-                continue
-            if str(hs_r).strip() in ('', 'None') or str(as_r).strip() in ('', 'None'):
-                continue
-            eh = ev.get('strHomeTeam', '')
-            ea = ev.get('strAwayTeam', '')
-            if _team_similar(eh, home) and _team_similar(ea, away):
-                return int(float(hs_r)), int(float(as_r))
-    except Exception as e:
-        _log.warning('WNBA result TSDB: %s', e)
-    # ESPN WNBA scoreboard (date-filtered, primary fixture source)
-    try:
-        r = _req.get(
-            'https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard',
-            params={'dates': str(match_date).replace('-', '')},
-            timeout=10,
-        )
-        for ev in (r.json().get('events') or []):
-            comp0 = (ev.get('competitions') or [{}])[0]
-            sname = comp0.get('status', {}).get('type', {}).get('name', '')
-            if 'FINAL' not in sname.upper():
-                continue
-            competitors = comp0.get('competitors') or []
-            hc = next((c for c in competitors if c.get('homeAway') == 'home'), None)
-            ac = next((c for c in competitors if c.get('homeAway') == 'away'), None)
-            if not hc or not ac:
-                continue
-            hn  = hc.get('team', {}).get('displayName', '')
-            an  = ac.get('team', {}).get('displayName', '')
-            hs  = hc.get('score')
-            as_ = ac.get('score')
-            if hs is None or as_ is None:
-                continue
-            if _team_similar(hn, home) and _team_similar(an, away):
-                return int(hs), int(as_)
-    except Exception as e:
-        _log.warning('WNBA result ESPN: %s', e)
+    """Fetch WNBA game result from TheSportsDB → ESPN, scanning nearby dates."""
+    for d in _bball_search_dates(match_date):
+        res = _tsdb_day_result(d, '4328', home, away)
+        if res:
+            return res
+        res = _espn_bball_day_result('wnba', d, home, away)
+        if res:
+            return res
     return None
 
 

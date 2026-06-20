@@ -2455,6 +2455,11 @@ def _update_live_scores():
                             """, (hs, as_, corners, status, mid))
                             _log.info('Result %s %d-%d %s → %s (corners=%s)',
                                       home, hs, as_, away, status, corners)
+                # This job resolves most PENDING/LIVE rows straight to WON/LOST
+                # before the 30-min checkers ever see them (they only sync
+                # saved_predictions when *they* find something to resolve), so
+                # saved_predictions would otherwise stay 'pending' forever.
+                _sync_saved_statuses(cur)
     except Exception as e:
         _log.warning('DB live update failed: %s', e)
         _check_pending_results()
@@ -2756,6 +2761,7 @@ except Exception as _e:
 # ── API routes ────────────────────────────────────────────────────────────────
 
 _CACHE_TTL = 600  # 10 minutes
+_BBALL_CACHE_TTL = 60  # NBA/WNBA fixtures need to surface live scores promptly
 
 _CLUB_TIPS_CACHE: dict  = {"data": None, "ts": 0.0}
 
@@ -3130,7 +3136,7 @@ def _nba_logo(abbr, sport='nba'):
 @app.route('/api/nba/fixtures')
 def nba_fixtures():
     now_ts = time.time()
-    if _NBA_CACHE["data"] is None or (now_ts - _NBA_CACHE["ts"]) > _CACHE_TTL:
+    if _NBA_CACHE["data"] is None or (now_ts - _NBA_CACHE["ts"]) > _BBALL_CACHE_TTL:
         try:
             from nba_predict import get_nba_fixtures as _get_games, predict_nba as _predict
             from datetime import date as _date, timedelta as _td
@@ -3180,7 +3186,7 @@ def nba_fixtures():
 @app.route('/api/wnba/fixtures')
 def wnba_fixtures():
     now_ts = time.time()
-    if _WNBA_CACHE["data"] is None or (now_ts - _WNBA_CACHE["ts"]) > _CACHE_TTL:
+    if _WNBA_CACHE["data"] is None or (now_ts - _WNBA_CACHE["ts"]) > _BBALL_CACHE_TTL:
         try:
             from nba_predict import get_wnba_fixtures as _get_games, predict_wnba as _predict
             from datetime import date as _date, timedelta as _td

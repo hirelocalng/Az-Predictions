@@ -253,6 +253,8 @@ function SportSection({ id, title, games, err, isPremium, onUpgrade }) {
 
 // ── Main section ──────────────────────────────────────────────────────────────
 
+const BBALL_REFRESH_MS = 60_000   // re-poll fixtures every 60 s so live scores update
+
 export default function BasketballSection() {
   const { isPremium, navigate } = useAuth()
   const [nbaGames,  setNbaGames]  = useState(null)
@@ -266,17 +268,23 @@ export default function BasketballSection() {
   }
 
   useEffect(() => {
-    fetch('/api/nba/fixtures')
+    const fetchNba = () => fetch('/api/nba/fixtures')
       .then(r => r.json())
-      .then(d => setNbaGames(Array.isArray(d) ? d.filter(g => !isFinished(g)) : []))
+      .then(d => { setNbaGames(Array.isArray(d) ? d.filter(g => !isFinished(g)) : []); setNbaErr(null) })
       .catch(e => setNbaErr(e.message))
+    fetchNba()
+    const id = setInterval(fetchNba, BBALL_REFRESH_MS)
+    return () => clearInterval(id)
   }, [])
 
   useEffect(() => {
-    fetch('/api/wnba/fixtures')
+    const fetchWnba = () => fetch('/api/wnba/fixtures')
       .then(r => r.json())
-      .then(d => setWnbaGames(Array.isArray(d) ? d.filter(g => !isFinished(g)) : []))
+      .then(d => { setWnbaGames(Array.isArray(d) ? d.filter(g => !isFinished(g)) : []); setWnbaErr(null) })
       .catch(e => setWnbaErr(e.message))
+    fetchWnba()
+    const id = setInterval(fetchWnba, BBALL_REFRESH_MS)
+    return () => clearInterval(id)
   }, [])
 
   const scrollTo = id => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' })
@@ -310,7 +318,7 @@ export default function BasketballSection() {
                     isPremium={isPremium} onUpgrade={goUpgrade} />
 
       <p className="footer-text">
-        NBA via TheSportsDB · WNBA via ESPN · predictions updated every 10 minutes
+        NBA via TheSportsDB · WNBA via ESPN · live scores refresh every 60 s
       </p>
     </section>
   )

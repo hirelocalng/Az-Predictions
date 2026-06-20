@@ -3,9 +3,9 @@ nba_predict.py — NBA and WNBA match prediction using trained XGBoost models.
 
 Data sources
 ------------
-NBA fixtures  : TheSportsDB API (league id 4387); BallDontLie fallback for form
+NBA fixtures  : ESPN NBA scoreboard (primary); TheSportsDB (league id 4387) fallback
 NBA team form : balldontlie.io v1 API (free, no key required)
-WNBA fixtures : TheSportsDB API (league id 4328)
+WNBA fixtures : ESPN WNBA scoreboard (primary); TheSportsDB (league id 4328) fallback
 WNBA team form: data/wnba_team_form_cache.csv (up to 2020 season)
 H2H           : data/nba.sqlite (historical)
 """
@@ -411,7 +411,8 @@ def predict_wnba(home_name, away_name, ou_line=None):
 # ─── Fixture fetching ─────────────────────────────────────────────────────────
 
 def get_nba_fixtures(start_date=None, end_date=None):
-    """Return NBA games from start_date through end_date using TheSportsDB (l=4387)."""
+    """Return NBA games using ESPN NBA scoreboard API (primary, has real live
+    scores/status). Fallback: TheSportsDB l=4387 per-day loop."""
     from datetime import date as _date, timedelta as _td, datetime as _dtt
     if not start_date:
         start_date = _date.today().strftime('%Y-%m-%d')
@@ -422,6 +423,65 @@ def get_nba_fixtures(start_date=None, end_date=None):
     end_  = _dtt.strptime(end_date,   '%Y-%m-%d').date()
     result = []
 
+    # ── Primary: ESPN NBA scoreboard ──────────────────────────────────────────
+    d = start
+    while d <= end_:
+        date_str = d.strftime('%Y-%m-%d')
+        try:
+            r = requests.get(
+                'https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard',
+                params={'dates': d.strftime('%Y%m%d')},
+                timeout=10,
+            )
+            for ev in (r.json().get('events') or []):
+                comp0       = ev.get('competitions', [{}])[0]
+                competitors = comp0.get('competitors', [])
+                home_c = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+                away_c = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+                if not home_c or not away_c:
+                    continue
+                ht = home_c.get('team', {})
+                at = away_c.get('team', {})
+                sname = comp0.get('status', {}).get('type', {}).get('name', '')
+                if 'FINAL' in sname:
+                    status = 'Final'
+                elif 'PROGRESS' in sname or 'HALFTIME' in sname:
+                    status = 'InProgress'
+                else:
+                    status = 'Scheduled'
+                hs  = home_c.get('score')
+                as_ = away_c.get('score')
+                headline = ((ev.get('notes') or [{}])[0].get('headline') or '').lower()
+                season_slug = (ev.get('season') or {}).get('slug', '')
+                if 'finals' in headline:
+                    comp = 'NBA Finals'
+                elif season_slug == 'post-season':
+                    comp = 'NBA Playoffs'
+                else:
+                    comp = 'NBA'
+                result.append({
+                    'id':         ev.get('id'),
+                    'home_team':  ht.get('displayName', ''),
+                    'away_team':  at.get('displayName', ''),
+                    'home_abbr':  ht.get('abbreviation', ''),
+                    'away_abbr':  at.get('abbreviation', ''),
+                    'home_score': int(hs)  if hs  is not None and str(hs).strip() not in ('', 'None') else None,
+                    'away_score': int(as_) if as_ is not None and str(as_).strip() not in ('', 'None') else None,
+                    'status':     status,
+                    'time':       ev.get('date', '')[11:16] if len(ev.get('date', '')) >= 16 else '',
+                    'date':       date_str,
+                    'competition': comp,
+                    'postseason': comp != 'NBA',
+                })
+        except Exception:
+            pass
+        d += _td(days=1)
+
+    if result:
+        result.sort(key=lambda g: g['date'])
+        return result
+
+    # ── Fallback: TheSportsDB NBA per-day (l=4387) ────────────────────────────
     d = start
     while d <= end_:
         date_str = d.strftime('%Y-%m-%d')

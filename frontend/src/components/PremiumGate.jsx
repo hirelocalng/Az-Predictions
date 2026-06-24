@@ -11,6 +11,8 @@ export default function PremiumGate({ lockedCount }) {
         Upgrade to Premium to see all predictions with no limits across every section.
       </p>
       <div className="gate-pricing">
+        <span>1 Week — ₦1,500</span>
+        <span className="gate-sep">·</span>
         <span>Monthly — ₦5,000</span>
         <span className="gate-sep">·</span>
         <span>3 Months — ₦15,000</span>

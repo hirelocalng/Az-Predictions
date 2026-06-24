@@ -62,6 +62,8 @@ function VipLockedPlaceholder({ navigate, auth }) {
         <h3 className="gate-title">VIP Tips Locked</h3>
         <p className="gate-desc">Upgrade to Premium to unlock today's expert VIP odds tips.</p>
         <div className="gate-pricing">
+          <span>1 Week — ₦1,500</span>
+          <span className="gate-sep">·</span>
           <span>Monthly — ₦5,000</span>
           <span className="gate-sep">·</span>
           <span>3 Months — ₦15,000</span>

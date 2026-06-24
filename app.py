@@ -4727,6 +4727,7 @@ _KORA_VERIFY_URL = 'https://api.korapay.com/merchant/api/v1/charges/{reference}'
 
 # Amount thresholds in Naira
 _PLAN_AMOUNTS = {
+    '1week':   1_500,
     'monthly': 5_000,
     '3month':  15_000,
 }
@@ -4808,7 +4809,9 @@ def payment_verify():
         # Prefer plan from metadata; fall back to amount threshold
         meta = data.get('metadata') or {}
         plan = str(meta.get('plan', '')).lower()
-        if plan == '3month' or amount >= 14_000:
+        if plan == '1week':
+            days = 7
+        elif plan == '3month' or amount >= 14_000:
             days = 90
         else:
             days = 30

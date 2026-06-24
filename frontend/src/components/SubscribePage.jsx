@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react'
 
 const PLANS = [
   {
+    id: '1week', name: '1 WEEK', price: '₦1,500', usd: '≈ $1 · perfect for a matchweek',
+    desc: 'Full access for 7 days',
+  },
+  {
     id: 'monthly', name: 'Monthly', price: '₦5,000', usd: '≈ $5 / month',
     desc: 'Full access for 1 month',
   },

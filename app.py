@@ -275,6 +275,14 @@ def _init_db():
             cur.execute(
                 "CREATE INDEX IF NOT EXISTS idx_premium_upsell_user ON premium_upsell_notifications(user_id, sent_at)"
             )
+            # Anonymous push subscribers (no account required — claimed on login)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS anonymous_notification_tokens (
+                    id         SERIAL PRIMARY KEY,
+                    player_id  VARCHAR(128) UNIQUE NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+            """)
             # ── Extend saved_predictions with notification flags ───────────────
             for _col in [
                 "ALTER TABLE saved_predictions ADD COLUMN IF NOT EXISTS match_start_notification_sent BOOLEAN DEFAULT FALSE",
@@ -695,28 +703,21 @@ def _notify_won_predictions():
             preds = cur.fetchall()
             if not preds:
                 return
-            # Use our own player-ID table rather than OneSignal's "Subscribed
-            # Users" segment — see admin_send_notification for why.
-            cur.execute('SELECT DISTINCT onesignal_player_id FROM notification_tokens')
-            all_player_ids = [r[0] for r in cur.fetchall()]
-            if not all_player_ids:
-                return
             notified_ids = []
             now = datetime.now(timezone.utc)
             for pred_id, home, away, pred_winner, confidence, sport in preds:
                 icon     = '🏀' if sport in ('nba', 'wnba') else '⚽'
                 conf_str = f' ({confidence*100:.0f}% confidence)' if confidence > 0 else ''
                 bet      = pred_winner or 'Prediction'
-                sent_ok = True
-                for i in range(0, len(all_player_ids), 2000):
-                    ok, _ = _onesignal_send({
-                        'include_player_ids': all_player_ids[i:i + 2000],
-                        'headings': {'en': f'✅ {icon} {home} vs {away}'},
-                        'contents': {'en': f'{bet} WON{conf_str}'},
-                        'url':      _APP_URL,
-                    })
-                    sent_ok = sent_ok and ok
-                if sent_ok:
+                # Broadcast to all OneSignal subscribers — includes anonymous
+                # visitors who allowed push but never created an account.
+                ok, _ = _onesignal_send({
+                    'included_segments': ['All'],
+                    'headings': {'en': f'✅ {icon} {home} vs {away}'},
+                    'contents': {'en': f'{bet} WON{conf_str}'},
+                    'url':      _APP_URL,
+                })
+                if ok:
                     notified_ids.append(pred_id)
             if notified_ids:
                 cur.executemany(
@@ -751,11 +752,17 @@ def _send_premium_upsell():
                  GROUP BY u.id
             """)
             rows = cur.fetchall()
-            if not rows:
-                _log.info('Premium upsell: no eligible free users today')
+            user_ids = [r[0] for r in rows]
+            known_ids = [pid for _, pids in rows for pid in pids]
+
+            # Anonymous subscribers have no account → effectively free
+            cur.execute('SELECT player_id FROM anonymous_notification_tokens')
+            anon_ids = [r[0] for r in cur.fetchall()]
+
+            all_player_ids = list({*known_ids, *anon_ids})
+            if not all_player_ids:
+                _log.info('Premium upsell: no eligible devices today')
                 return
-            all_player_ids = [pid for _, pids in rows for pid in pids]
-            user_ids       = [r[0] for r in rows]
             # OneSignal limit: 2000 player IDs per call
             for i in range(0, len(all_player_ids), 2000):
                 _onesignal_send({
@@ -4720,9 +4727,45 @@ def save_notification_token():
                 VALUES (%s, %s)
                 ON CONFLICT (user_id, onesignal_player_id) DO NOTHING
             """, (user['id'], player_id))
+            # Claim the token from the anonymous table now that we know the owner
+            cur.execute(
+                'DELETE FROM anonymous_notification_tokens WHERE player_id = %s',
+                (player_id,)
+            )
             return jsonify({'success': True})
     except Exception as e:
         _log.error('save_notification_token: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/push/register', methods=['POST'])
+def register_anonymous_push_token():
+    """Store a OneSignal player ID for a visitor who hasn't logged in yet.
+    No auth required — anyone who allowed push can register here.
+    On login, /api/user/notification-token claims the ID and moves it."""
+    data      = request.get_json(silent=True) or {}
+    player_id = (data.get('player_id') or '').strip()
+    if not player_id:
+        return jsonify({'error': 'player_id is required'}), 400
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'Database unavailable'}), 503
+            # Skip if already claimed by a logged-in user
+            cur.execute(
+                'SELECT 1 FROM notification_tokens WHERE onesignal_player_id = %s LIMIT 1',
+                (player_id,)
+            )
+            if cur.fetchone():
+                return jsonify({'success': True})
+            cur.execute("""
+                INSERT INTO anonymous_notification_tokens (player_id)
+                VALUES (%s)
+                ON CONFLICT (player_id) DO NOTHING
+            """, (player_id,))
+        return jsonify({'success': True})
+    except Exception as e:
+        _log.error('register_anonymous_push_token: %s', e)
         return jsonify({'error': str(e)}), 500
 
 
@@ -4754,17 +4797,30 @@ def admin_send_notification():
             if conn is None:
                 return jsonify({'error': 'Database unavailable'}), 503
 
-            # Resolve the audience to concrete OneSignal player IDs from our own
-            # notification_tokens table — NOT OneSignal's "Subscribed Users"
-            # segment. That segment's membership is computed/cached on
-            # OneSignal's side and was found to silently miss real subscribers,
-            # so "Send to All" notifications never arrived even though the API
-            # call reported success. include_player_ids (the mechanism already
-            # proven reliable for kickoff/result alerts) always reaches every
-            # device we have on record.
             if recipient_type == 'all':
-                cur.execute('SELECT DISTINCT onesignal_player_id FROM notification_tokens')
-            elif recipient_type == 'free':
+                # Use OneSignal's own segment — reaches all subscribers
+                # (logged-in users AND anonymous visitors who allowed push).
+                ok, body = _onesignal_send({
+                    'included_segments': ['All'],
+                    'headings': {'en': title},
+                    'contents': {'en': message},
+                    'url':      _APP_URL,
+                })
+                if not ok:
+                    return jsonify({'error': f'OneSignal API error: {body}'}), 500
+                try:
+                    sent_count = json.loads(body).get('recipients', 0)
+                except Exception:
+                    sent_count = 0
+                cur.execute("""
+                    INSERT INTO admin_notifications
+                        (title, message, recipient_type, recipient_user_id, sent_count)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (title, message, recipient_type, None, sent_count))
+                return jsonify({'success': True, 'sent_count': sent_count,
+                                'message': f'Sent to {sent_count} device(s)'})
+
+            if recipient_type == 'free':
                 cur.execute("""
                     SELECT DISTINCT nt.onesignal_player_id
                       FROM notification_tokens nt
@@ -4773,6 +4829,11 @@ def admin_send_notification():
                         OR u.premium_until IS NULL
                         OR u.premium_until < NOW()
                 """)
+                known_ids = [r[0] for r in cur.fetchall()]
+                # Anonymous subscribers have no account → treated as free
+                cur.execute('SELECT player_id FROM anonymous_notification_tokens')
+                anon_ids = [r[0] for r in cur.fetchall()]
+                player_ids = list({*known_ids, *anon_ids})
             elif recipient_type == 'premium':
                 cur.execute("""
                     SELECT DISTINCT nt.onesignal_player_id
@@ -4782,12 +4843,13 @@ def admin_send_notification():
                        AND u.premium_until IS NOT NULL
                        AND u.premium_until > NOW()
                 """)
+                player_ids = [r[0] for r in cur.fetchall()]
             else:  # specific
                 cur.execute(
                     'SELECT onesignal_player_id FROM notification_tokens WHERE user_id = %s',
                     (int(user_id),)
                 )
-            player_ids = [r[0] for r in cur.fetchall()]
+                player_ids = [r[0] for r in cur.fetchall()]
 
             if not player_ids:
                 return jsonify({'success': True, 'sent_count': 0,

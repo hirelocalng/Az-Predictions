@@ -39,10 +39,22 @@
         function cacheSubId() {
           var id = OneSignal.User && OneSignal.User.PushSubscription && OneSignal.User.PushSubscription.id;
           if (id) localStorage.setItem('os_sub_id', id);
+          return id || null;
         }
-        cacheSubId();
+        // Also persist to the backend so anonymous subscribers can receive
+        // broadcasts even if they never create an account.
+        function saveAnonymousToken() {
+          var id = cacheSubId();
+          if (!id) return;
+          fetch('/api/push/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ player_id: id }),
+          }).catch(function() {});
+        }
+        saveAnonymousToken();
         try {
-          OneSignal.User.PushSubscription.addEventListener('change', cacheSubId);
+          OneSignal.User.PushSubscription.addEventListener('change', saveAnonymousToken);
         } catch(e) {}
         // Prompt all visitors for push permission (slidedown UI)
         try { await OneSignal.Slidedown.promptPush(); } catch(e) {}

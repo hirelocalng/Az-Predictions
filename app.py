@@ -761,7 +761,7 @@ def _send_premium_upsell():
                 _onesignal_send({
                     'include_player_ids': all_player_ids[i:i+2000],
                     'headings': {'en': '👑 Unlock VIP Predictions'},
-                    'contents': {'en': 'Get Daily Accumulator, VIP Tips & match alerts — ₦5,000/month'},
+                    'contents': {'en': 'Get Daily Accumulator, VIP Tips & match alerts — Upgrade now'},
                     'url':      f'{_APP_URL}/subscribe',
                 })
             now = datetime.now(timezone.utc)
@@ -2722,15 +2722,140 @@ WC_FIXTURES_RAW = [
     {"id":"wcL6","group":"L","home":"Croatia", "away":"Ghana",
      "home_code":"hr","away_code":"gh",
      "date":"2026-06-27","time":"21:00","venue":"Lincoln Financial Field, Philadelphia"},
+
+    # ── ROUND OF 32  (June 28 – July 4 UTC) ──────────────────────────────────
+    {"id":"wcR32_73","group":"R32","home":"South Africa","away":"Canada",
+     "home_code":"za","away_code":"ca",
+     "date":"2026-06-28","time":"19:00","venue":"SoFi Stadium, Inglewood"},
+    {"id":"wcR32_76","group":"R32","home":"Brazil","away":"Japan",
+     "home_code":"br","away_code":"jp",
+     "date":"2026-06-29","time":"17:00","venue":"NRG Stadium, Houston"},
+    {"id":"wcR32_74","group":"R32","home":"Germany","away":"Paraguay",
+     "home_code":"de","away_code":"py",
+     "date":"2026-06-29","time":"20:30","venue":"Gillette Stadium, Foxborough"},
+    {"id":"wcR32_75","group":"R32","home":"Netherlands","away":"Morocco",
+     "home_code":"nl","away_code":"ma",
+     "date":"2026-06-30","time":"01:00","venue":"Estadio BBVA, Guadalupe"},
+    {"id":"wcR32_78","group":"R32","home":"Ivory Coast","away":"Norway",
+     "home_code":"ci","away_code":"no",
+     "date":"2026-06-30","time":"17:00","venue":"AT&T Stadium, Arlington"},
+    {"id":"wcR32_77","group":"R32","home":"France","away":"Sweden",
+     "home_code":"fr","away_code":"se",
+     "date":"2026-06-30","time":"21:00","venue":"MetLife Stadium, East Rutherford"},
+    {"id":"wcR32_79","group":"R32","home":"Mexico","away":"Ecuador",
+     "home_code":"mx","away_code":"ec",
+     "date":"2026-07-01","time":"01:00","venue":"Estadio Azteca, Mexico City"},
+    {"id":"wcR32_80","group":"R32","home":"England","away":"DR Congo",
+     "home_code":"gb-eng","away_code":"cd",
+     "date":"2026-07-01","time":"16:00","venue":"Mercedes-Benz Stadium, Atlanta"},
+    {"id":"wcR32_82","group":"R32","home":"Belgium","away":"Senegal",
+     "home_code":"be","away_code":"sn",
+     "date":"2026-07-01","time":"20:00","venue":"Lumen Field, Seattle"},
+    {"id":"wcR32_81","group":"R32","home":"United States","away":"Bosnia and Herzegovina",
+     "home_code":"us","away_code":"ba",
+     "date":"2026-07-02","time":"00:00","venue":"Levi's Stadium, Santa Clara"},
+    {"id":"wcR32_84","group":"R32","home":"Spain","away":"Austria",
+     "home_code":"es","away_code":"at",
+     "date":"2026-07-02","time":"19:00","venue":"SoFi Stadium, Inglewood"},
+    {"id":"wcR32_83","group":"R32","home":"Portugal","away":"Croatia",
+     "home_code":"pt","away_code":"hr",
+     "date":"2026-07-02","time":"23:00","venue":"BMO Field, Toronto"},
+    {"id":"wcR32_85","group":"R32","home":"Switzerland","away":"Algeria",
+     "home_code":"ch","away_code":"dz",
+     "date":"2026-07-03","time":"03:00","venue":"BC Place, Vancouver"},
+    {"id":"wcR32_88","group":"R32","home":"Australia","away":"Egypt",
+     "home_code":"au","away_code":"eg",
+     "date":"2026-07-03","time":"18:00","venue":"AT&T Stadium, Arlington"},
+    {"id":"wcR32_86","group":"R32","home":"Argentina","away":"Cape Verde",
+     "home_code":"ar","away_code":"cv",
+     "date":"2026-07-03","time":"22:00","venue":"Hard Rock Stadium, Miami Gardens"},
+    {"id":"wcR32_87","group":"R32","home":"Colombia","away":"Ghana",
+     "home_code":"co","away_code":"gh",
+     "date":"2026-07-04","time":"01:30","venue":"Arrowhead Stadium, Kansas City"},
+
+    # ── ROUND OF 16  (July 4 – 7 UTC) ────────────────────────────────────────
+    {"id":"wcR16_90","group":"R16","home":"Canada","away":"TBD (NED/MAR)",
+     "home_code":"ca","away_code":"tbd",
+     "date":"2026-07-04","time":"17:00","venue":"NRG Stadium, Houston"},
+    {"id":"wcR16_89","group":"R16","home":"TBD (GER/PAR)","away":"TBD (FRA/SWE)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-04","time":"21:00","venue":"Lincoln Financial Field, Philadelphia"},
+    {"id":"wcR16_91","group":"R16","home":"TBD (BRA/JPN)","away":"TBD (CIV/NOR)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-05","time":"20:00","venue":"MetLife Stadium, East Rutherford"},
+    {"id":"wcR16_92","group":"R16","home":"TBD (MEX/ECU)","away":"TBD (ENG/CGO)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-06","time":"00:00","venue":"Estadio Azteca, Mexico City"},
+    {"id":"wcR16_93","group":"R16","home":"TBD (POR/CRO)","away":"TBD (ESP/AUT)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-06","time":"19:00","venue":"AT&T Stadium, Arlington"},
+    {"id":"wcR16_94","group":"R16","home":"TBD (USA/BIH)","away":"TBD (BEL/SEN)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-07","time":"00:00","venue":"Lumen Field, Seattle"},
+    {"id":"wcR16_95","group":"R16","home":"TBD (ARG/CPV)","away":"TBD (AUS/EGY)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-07","time":"16:00","venue":"Mercedes-Benz Stadium, Atlanta"},
+    {"id":"wcR16_96","group":"R16","home":"TBD (SUI/ALG)","away":"TBD (COL/GHA)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-07","time":"20:00","venue":"BC Place, Vancouver"},
+
+    # ── QUARTER-FINALS  (July 9 – 12 UTC) ────────────────────────────────────
+    {"id":"wcQF_97","group":"QF","home":"TBD (QF1)","away":"TBD (QF2)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-09","time":"20:00","venue":"Gillette Stadium, Foxborough"},
+    {"id":"wcQF_98","group":"QF","home":"TBD (QF3)","away":"TBD (QF4)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-10","time":"19:00","venue":"SoFi Stadium, Inglewood"},
+    {"id":"wcQF_99","group":"QF","home":"TBD (QF5)","away":"TBD (QF6)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-11","time":"21:00","venue":"Hard Rock Stadium, Miami Gardens"},
+    {"id":"wcQF_100","group":"QF","home":"TBD (QF7)","away":"TBD (QF8)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-12","time":"01:00","venue":"Arrowhead Stadium, Kansas City"},
+
+    # ── SEMI-FINALS  (July 14 – 15) ──────────────────────────────────────────
+    {"id":"wcSF_101","group":"SF","home":"TBD (SF1)","away":"TBD (SF2)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-14","time":"19:00","venue":"AT&T Stadium, Arlington"},
+    {"id":"wcSF_102","group":"SF","home":"TBD (SF3)","away":"TBD (SF4)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-15","time":"19:00","venue":"Mercedes-Benz Stadium, Atlanta"},
+
+    # ── THIRD PLACE  (July 18) ────────────────────────────────────────────────
+    {"id":"wcTP_103","group":"3rd","home":"TBD (3rd1)","away":"TBD (3rd2)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-18","time":"21:00","venue":"Hard Rock Stadium, Miami Gardens"},
+
+    # ── FINAL  (July 19) ──────────────────────────────────────────────────────
+    {"id":"wcFinal","group":"Final","home":"TBD (FIN1)","away":"TBD (FIN2)",
+     "home_code":"tbd","away_code":"tbd",
+     "date":"2026-07-19","time":"19:00","venue":"MetLife Stadium, East Rutherford"},
 ]
 
 def _build_wc_fixtures():
     fixtures = []
     for raw in WC_FIXTURES_RAW:
-        pred = _wc_predict(raw['home'], raw['away'])
+        home, away = raw['home'], raw['away']
+
+        # Knockout placeholder — teams not yet determined
+        if 'TBD' in home or 'TBD' in away:
+            entry = {
+                **raw,
+                'utc_kickoff':  f"{raw['date']}T{raw['time']}:00Z",
+                'result':       {'home': 0.33, 'draw': 0.34, 'away': 0.33},
+                'over_goals':   0.45,
+                'btts':         0.48,
+                'over_corners': 0.52,
+                'competition':  'FIFA World Cup 2026',
+                'best_bet':     {'label': 'TBD', 'confidence': 0.0},
+            }
+            fixtures.append(entry)
+            continue
+
+        pred = _wc_predict(home, away)
         if pred is None:
             _log.error('No prediction for WC fixture %s vs %s — skipping',
-                       raw['home'], raw['away'])
+                       home, away)
             continue
 
         ph, pd_, pa = pred['home_win'], pred['draw'], pred['away_win']
@@ -2806,7 +2931,12 @@ def _wc_round_cutoff():
     if today < _d(2026, 6, 15): return '2026-06-14'   # Round 1 first batch
     if today < _d(2026, 6, 18): return '2026-06-17'   # Full round 1
     if today < _d(2026, 6, 24): return '2026-06-23'   # Round 2
-    return '2026-06-28'                                 # Round 3
+    if today < _d(2026, 6, 29): return '2026-06-28'   # Round 3
+    if today < _d(2026, 7,  5): return '2026-07-04'   # Round of 32
+    if today < _d(2026, 7,  9): return '2026-07-07'   # Round of 16
+    if today < _d(2026, 7, 14): return '2026-07-12'   # Quarter-finals
+    if today < _d(2026, 7, 16): return '2026-07-15'   # Semi-finals
+    return '2026-07-19'                                 # 3rd place + Final
 
 
 @app.route('/api/worldcup/fixtures')

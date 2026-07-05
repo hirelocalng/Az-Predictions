@@ -2207,9 +2207,10 @@ def _daily_results_cleanup():
     _log.info('Daily results cleanup: running football + basketball checks…')
     football   = _check_pending_results() or 0
     basketball = _check_basketball_results() or 0
-    _log.info('Daily results cleanup done: %d football, %d basketball resolved',
-               football, basketball)
-    return {'football_resolved': football, 'basketball_resolved': basketball}
+    bracket    = _wc_sync_bracket() or 0
+    _log.info('Daily results cleanup done: %d football, %d basketball resolved, %d bracket slot(s) resolved',
+               football, basketball, bracket)
+    return {'football_resolved': football, 'basketball_resolved': basketball, 'bracket_resolved': bracket}
 
 # ── ESPN live-score polling ───────────────────────────────────────────────────
 
@@ -2883,6 +2884,135 @@ def _build_wc_fixtures():
     return fixtures
 
 
+def _wc_is_resolved(fixture: dict) -> bool:
+    """True once both bracket slots hold real, confirmed team names (no TBD placeholder)."""
+    return 'TBD' not in fixture.get('home', '') and 'TBD' not in fixture.get('away', '')
+
+
+# ── WC bracket auto-progression ───────────────────────────────────────────────
+#
+# ESPN's fifa.world scoreboard resolves a knockout fixture's real teams (e.g.
+# "Brazil" instead of "TBD (BRA/JPN)") as soon as both feeder matches finish —
+# often days before that fixture kicks off. Confirmed 2026-07-05: the R16 slot
+# at MetLife Stadium (our wcR16_91, date 2026-07-05) already returned
+# "Norway at Brazil" from ESPN hours ahead of kickoff, while still-undecided
+# slots returned generic names like "Quarterfinal 1 Winner" / "Semifinal 2
+# Loser" — so `_wc_espn_event_resolved` treats any "Winner"/"Loser"/"TBD" name
+# as not yet known.
+#
+# Fixtures are matched to ESPN events by exact UTC kickoff instant (not venue
+# name) — each knockout slot's kickoff time is pinned by the tournament
+# schedule regardless of who ends up playing there, and venue names drift
+# (e.g. ESPN lists Mexico City's stadium as "Estadio Banorte", we recorded it
+# as "Estadio Azteca"). ESPN also buckets late-UTC kickoffs (evening US local
+# time) under the previous calendar day, so both the fixture's date and the
+# day before are queried — the same quirk `_fetch_espn_result_dated` already
+# works around for score lookups.
+
+def _wc_fetch_espn_day(date_str: str) -> list:
+    """Return [{'kickoff': datetime, 'home', 'away'}] for fifa.world events
+    on date_str (YYYY-MM-DD) and the UTC day before."""
+    import requests as _req
+    from datetime import date as _date_cls
+    url = 'https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard'
+    d = _date_cls.fromisoformat(date_str)
+    date_codes = [date_str.replace('-', ''), (d - timedelta(days=1)).strftime('%Y%m%d')]
+    out = []
+    for dc in date_codes:
+        try:
+            r = _req.get(url, params={'dates': dc}, timeout=10)
+            r.raise_for_status()
+        except Exception:
+            continue
+        for ev in (r.json().get('events') or []):
+            comp = (ev.get('competitions') or [{}])[0]
+            competitors = comp.get('competitors') or []
+            home_c = next((c for c in competitors if c.get('homeAway') == 'home'), None)
+            away_c = next((c for c in competitors if c.get('homeAway') == 'away'), None)
+            if not home_c or not away_c:
+                continue
+            try:
+                kickoff = datetime.fromisoformat(ev.get('date', '').replace('Z', '+00:00'))
+            except Exception:
+                continue
+            out.append({
+                'kickoff': kickoff,
+                'home':    (home_c.get('team') or {}).get('displayName', ''),
+                'away':    (away_c.get('team') or {}).get('displayName', ''),
+            })
+    return out
+
+
+def _wc_espn_event_resolved(name: str) -> bool:
+    """False for ESPN's own placeholders ('Quarterfinal 1 Winner', 'Semifinal 2 Loser', 'TBD', etc.)."""
+    return bool(name) and not any(kw in name for kw in ('Winner', 'Loser', 'TBD'))
+
+
+def _wc_sync_bracket():
+    """
+    Scheduler job: replace TBD knockout placeholders with the real qualified
+    teams once ESPN's bracket confirms them, then rebuild WC fixtures so the
+    trained WC model scores the newly-known matchup immediately (same model /
+    accuracy as every other WC prediction — no generic placeholder stats).
+    """
+    global _WC_FIXTURES
+    tbd = [f for f in WC_FIXTURES_RAW if not _wc_is_resolved(f)]
+    if not tbd:
+        return 0
+
+    flag_map = {}
+    for r in WC_FIXTURES_RAW:
+        if r.get('home_code') and r['home_code'] != 'tbd':
+            flag_map[r['home']] = r['home_code']
+        if r.get('away_code') and r['away_code'] != 'tbd':
+            flag_map[r['away']] = r['away_code']
+
+    events_by_date = {}
+    resolved_count = 0
+    for raw in tbd:
+        d = raw['date']
+        if d not in events_by_date:
+            try:
+                events_by_date[d] = _wc_fetch_espn_day(d)
+            except Exception as exc:
+                _log.warning('WC bracket sync: ESPN fetch failed for %s: %s', d, exc)
+                events_by_date[d] = []
+        events = events_by_date[d]
+
+        try:
+            expected_kickoff = datetime.fromisoformat(f"{raw['date']}T{raw['time']}:00+00:00")
+        except Exception:
+            continue
+        match = next(
+            (e for e in events if abs((e['kickoff'] - expected_kickoff).total_seconds()) <= 300),
+            None,
+        )
+        if match is None:
+            continue
+
+        new_home, new_away = match['home'], match['away']
+        if not (_wc_espn_event_resolved(new_home) and _wc_espn_event_resolved(new_away)):
+            continue
+        if new_home == raw['home'] and new_away == raw['away']:
+            continue
+
+        _log.info('WC bracket resolved: %s → %s vs %s (was %s vs %s)',
+                   raw['id'], new_home, new_away, raw['home'], raw['away'])
+        raw['home'] = new_home
+        raw['away'] = new_away
+        raw['home_code'] = flag_map.get(new_home, 'tbd')
+        raw['away_code'] = flag_map.get(new_away, 'tbd')
+        resolved_count += 1
+
+    if resolved_count:
+        _WC_FIXTURES = _build_wc_fixtures()
+        _DAILY_TIPS_CACHE['ts']  = 0
+        _BEST_BET_CACHE['data'] = None
+        _INTL_TIPS_CACHE['ts']  = 0
+        _log.info('WC bracket sync: %d fixture(s) resolved, fixtures rebuilt', resolved_count)
+    return resolved_count
+
+
 try:
     _init_db()
 except Exception as _e:
@@ -2955,6 +3085,8 @@ def wc_fixtures():
     for f in _WC_FIXTURES:
         if f['date'] > cutoff:
             continue
+        if not _wc_is_resolved(f):
+            continue  # hide until real teams are confirmed — no fabricated placeholder stats
         mk = _match_key(f['home'], f['away'], f['date'])
         if mk in done:
             continue
@@ -3077,6 +3209,8 @@ def daily_tips():
     for f in _WC_FIXTURES:
         if f.get('date','') != today_str:
             continue
+        if not _wc_is_resolved(f):
+            continue  # hide until real teams are confirmed — no fabricated placeholder stats
         mk = _match_key(f['home'], f['away'], f['date'])
         if mk in done or mk in seen_keys:
             continue
@@ -3138,7 +3272,7 @@ def best_bet_of_day():
     # Aggregate all sources; include today's WC fixtures
     raw = list(_CLUB_TIPS_CACHE["data"] or []) + list(_INTL_TIPS_CACHE["data"] or [])
     for f in _WC_FIXTURES:
-        if f.get('date', '') == today_str:
+        if f.get('date', '') == today_str and _wc_is_resolved(f):
             raw.append(f)
 
     # Deduplicate by match_id
@@ -3818,6 +3952,7 @@ def admin_sync_scores():
         return jsonify({
             'football_resolved':   summary['football_resolved'],
             'basketball_resolved': summary['basketball_resolved'],
+            'bracket_resolved':    summary['bracket_resolved'],
             'total_resolved':      summary['football_resolved'] + summary['basketball_resolved'],
             'pending_before': before,
             'pending_after':  after,
@@ -5094,6 +5229,11 @@ def _refresh_caches():
         _log.warning('WC fixtures refresh failed: %s', _e)
 
 
+try:
+    _wc_sync_bracket()
+except Exception as _e:
+    _log.warning('WC bracket sync (startup) failed: %s', _e)
+
 # ── APScheduler — live update every 2 min + cache refresh every 6 h ──────────
 try:
     from apscheduler.schedulers.background import BackgroundScheduler as _BgSched
@@ -5104,6 +5244,8 @@ try:
                        id='results_checker', misfire_grace_time=120)
     _scheduler.add_job(_check_basketball_results, 'interval', minutes=30,
                        id='basketball_checker', misfire_grace_time=120)
+    _scheduler.add_job(_wc_sync_bracket, 'interval', minutes=30,
+                       id='wc_bracket_sync', misfire_grace_time=120)
     _scheduler.add_job(_refresh_caches, 'interval', hours=6,
                        id='cache_refresh', misfire_grace_time=300)
     _scheduler.add_job(_notify_kickoff,         'interval', minutes=10,

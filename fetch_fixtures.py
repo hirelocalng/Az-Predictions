@@ -8,6 +8,7 @@ Endpoints used:
 
 import difflib
 import math
+import unicodedata
 import warnings
 from datetime import datetime, timezone
 
@@ -245,12 +246,59 @@ def _load_history(league_code: str) -> pd.DataFrame:
     return combined
 
 
+# Known official-name spelling variants that beat the substring/fuzzy logic
+# below on their own — e.g. "RCD Espanyol de Barcelona" contains the literal
+# substring "Barcelona" (the city qualifier), which would otherwise outrank
+# "Espanol" (Matches.csv's spelling, missing the Catalan "y") and wrongly
+# resolve Espanyol fixtures to FC Barcelona.
+_FD_TEAM_ALIAS = {
+    "rcd espanyol de barcelona": "Espanol",
+    "espanyol": "Espanol",
+    "club atletico de madrid": "Ath Madrid",   # "Atletico" doesn't abbreviate to "Ath" via substring/fuzzy
+    "atletico madrid": "Ath Madrid",
+    "athletic club": "Ath Bilbao",             # no shared token with "Ath Bilbao" at all
+    "athletic bilbao": "Ath Bilbao",
+    "wolverhampton wanderers fc": "Wolves",    # no shared token with "Wolves" at all
+    "wolverhampton wanderers": "Wolves",
+}
+
+
+def _normalize_name(name: str) -> str:
+    n = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    return n.lower().strip()
+
+
 def _resolve(name: str, teams: list) -> str | None:
-    nl = name.lower().strip()
+    """
+    Resolve a live fixture's team name (often a verbose official name, e.g.
+    "Rayo Vallecano de Madrid" or "Real Betis Balompié") against a list of
+    canonical short names (e.g. "Vallecano", "Betis") used in the historical
+    data. Priority order:
+      1. exact match (accent/case-insensitive)
+      2. known alias override (spelling variants that'd otherwise mismatch)
+      3. longest canonical name that appears as a substring of the input —
+         substring containment is far more reliable than raw character-diff
+         similarity for these "<Club> de <City>" official names, where a
+         short/generic candidate (e.g. "Real Madrid") can otherwise win on
+         a shared city name alone (e.g. "Rayo Vallecano de Madrid")
+      4. fuzzy fallback (tightened cutoff — was silently matching unrelated
+         teams at 0.4)
+    """
+    nl = _normalize_name(name)
+
     for t in teams:
-        if t.lower().strip() == nl:
+        if _normalize_name(t) == nl:
             return t
-    ms = difflib.get_close_matches(name, teams, n=1, cutoff=0.4)
+
+    alias = _FD_TEAM_ALIAS.get(nl)
+    if alias and alias in teams:
+        return alias
+
+    contained = [t for t in teams if _normalize_name(t) and _normalize_name(t) in nl]
+    if contained:
+        return max(contained, key=lambda t: len(_normalize_name(t)))
+
+    ms = difflib.get_close_matches(name, teams, n=1, cutoff=0.55)
     return ms[0] if ms else None
 
 

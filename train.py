@@ -160,6 +160,60 @@ def load_matches(data_dir: str) -> pd.DataFrame:
     return df
 
 
+LALIGA_TEAM_ALIAS = {"Villareal": "Villarreal"}  # spelling variant in older files
+
+
+def load_laliga_early(data_dir: str, cutoff) -> pd.DataFrame:
+    """
+    data/LaLiga/*.csv — football-data.co.uk La Liga (SP1) season files,
+    user-provided, 1993-94 through 2025-26 (2001-02 missing). Only seasons
+    strictly before `cutoff` are used (Matches.csv's own SP1 coverage starts
+    2000-09-09), so there's no overlap/dedup needed with the main dataset.
+
+    Results only, no corners/odds/elo/form for this era — NaN, same as the
+    other supplement sources below; XGBoost handles missing values natively.
+    """
+    import glob
+    laliga_dir = os.path.join(data_dir, "LaLiga")
+    if not os.path.isdir(laliga_dir):
+        return pd.DataFrame()
+
+    dfs = []
+    for path in sorted(glob.glob(os.path.join(laliga_dir, "*.csv"))):
+        raw = pd.read_csv(path, encoding="utf-8-sig", on_bad_lines="skip", engine="python")
+        raw = raw.dropna(subset=["HomeTeam", "AwayTeam", "FTHG", "FTAG", "FTR"])
+        raw["Date"] = pd.to_datetime(raw["Date"], dayfirst=True, format="mixed", errors="coerce")
+        raw = raw[raw["Date"] < cutoff]
+        if raw.empty:
+            continue
+        raw["HomeTeam"] = raw["HomeTeam"].map(lambda t: LALIGA_TEAM_ALIAS.get(t, t))
+        raw["AwayTeam"] = raw["AwayTeam"].map(lambda t: LALIGA_TEAM_ALIAS.get(t, t))
+        df = pd.DataFrame({
+            "home_team":    raw["HomeTeam"].astype(str).str.strip(),
+            "away_team":    raw["AwayTeam"].astype(str).str.strip(),
+            "home_goals":   pd.to_numeric(raw["FTHG"], errors="coerce"),
+            "away_goals":   pd.to_numeric(raw["FTAG"], errors="coerce"),
+            "result":       raw["FTR"].astype(str).str.strip(),
+            "home_sot":     np.nan, "away_sot": np.nan,
+            "home_corners": np.nan, "away_corners": np.nan,
+            "date":         raw["Date"],
+            "league":       "SP1",
+            "elo_diff": np.nan, "elo_prob_h": np.nan,
+            "form5_h": np.nan, "form5_a": np.nan, "form5_diff": np.nan,
+            "imp_h": np.nan, "imp_d": np.nan, "imp_a": np.nan, "book_margin": np.nan,
+        })
+        df = df[df["result"].isin(["H", "D", "A"])]
+        df.dropna(subset=["home_goals", "away_goals", "date"], inplace=True)
+        dfs.append(df)
+
+    if not dfs:
+        return pd.DataFrame()
+    out = pd.concat(dfs, ignore_index=True)
+    print(f"  La Liga early era (pre-{cutoff.date()}): {len(out):,} matches  "
+          f"({out['date'].min().date()} - {out['date'].max().date()})  [results only]")
+    return out
+
+
 def load_fbref_supplements(data_dir: str) -> pd.DataFrame:
     """
     Load FBref-extracted CSVs for Brazil 2025 and Argentina 2025.
@@ -372,10 +426,12 @@ def main():
     print("\n  FBref supplements (2025 seasons, no overlap with Matches.csv):")
     df_fbref = load_fbref_supplements(DATA_DIR)
 
-    if len(df_fbref) > 0:
-        df = pd.concat([df_main, df_fbref], ignore_index=True)
-    else:
-        df = df_main
+    sp1_min = df_main.loc[df_main["league"] == "SP1", "date"].min()
+    print("\n  La Liga early era supplement:")
+    df_laliga = load_laliga_early(DATA_DIR, sp1_min) if pd.notna(sp1_min) else pd.DataFrame()
+
+    extra = [d for d in (df_fbref, df_laliga) if len(d) > 0]
+    df = pd.concat([df_main] + extra, ignore_index=True) if extra else df_main
 
     print(f"\n  Combined total: {len(df):,} matches")
 
@@ -501,6 +557,42 @@ def main():
           f"  vs-naive={new_acc_g - naive_acc_g:+.3f}")
     print(f"  Corners O/U 9.5  naive={naive_acc_c * 100:.1f}%   new={new_acc_c * 100:.1f}%"
           f"  vs-naive={new_acc_c - naive_acc_c:+.3f}")
+
+    # --- League-specific breakdown (SP1 / La Liga) ---
+    sp1_te_r = te_r[te_r["league"] == "SP1"]
+    sp1_te_g = te_g[te_g["league"] == "SP1"]
+    sp1_te_c = te_c[te_c["league"] == "SP1"]
+    print("\n" + "-" * 62)
+    print("  LA LIGA (SP1) — HELD-OUT TEST SUBSET (same split as above)")
+    print("-" * 62)
+    if len(sp1_te_r):
+        sp1_acc_r = accuracy_score(
+            le_result.transform(sp1_te_r["result"]),
+            model_result.predict(sp1_te_r[BASE_FEATURES].values.astype(float)))
+        sp1_naive_r = (np.where(
+            (sp1_te_r["imp_h"] >= sp1_te_r["imp_d"]) & (sp1_te_r["imp_h"] >= sp1_te_r["imp_a"]), "H",
+            np.where(sp1_te_r["imp_d"] >= sp1_te_r["imp_a"], "D", "A")
+        ) == sp1_te_r["result"].values).mean()
+        print(f"  Result  (H/D/A)  n={len(sp1_te_r)}  naive={sp1_naive_r*100:.1f}%  new={sp1_acc_r*100:.1f}%")
+    else:
+        print("  Result: no SP1 rows in held-out test set")
+    if len(sp1_te_g):
+        sp1_acc_g = accuracy_score(
+            sp1_te_g["over_2_5"].values,
+            model_goals.predict(sp1_te_g[BASE_FEATURES].values.astype(float)))
+        sp1_naive_g = max(sp1_te_g["over_2_5"].mean(), 1 - sp1_te_g["over_2_5"].mean())
+        print(f"  Goals   O/U 2.5  n={len(sp1_te_g)}  naive={sp1_naive_g*100:.1f}%  new={sp1_acc_g*100:.1f}%")
+    else:
+        print("  Goals: no SP1 rows in held-out test set")
+    if len(sp1_te_c):
+        sp1_acc_c = accuracy_score(
+            sp1_te_c["over_9_5"].values,
+            model_corners.predict(sp1_te_c[CORNER_FEATURES].values.astype(float)))
+        sp1_naive_c = max(sp1_te_c["over_9_5"].mean(), 1 - sp1_te_c["over_9_5"].mean())
+        print(f"  Corners O/U 9.5  n={len(sp1_te_c)}  naive={sp1_naive_c*100:.1f}%  new={sp1_acc_c*100:.1f}%")
+    else:
+        print("  Corners: no SP1 rows in held-out test set")
+    print("-" * 62)
 
     # --- Deploy gate: new model must beat naive baseline on result + goals ---
     # (Old model scores are informational only -- they were trained with random

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { initOneSignal, oneSignalLogin, oneSignalLogout } from './notifications.js'
-import WorldCupSection from './components/WorldCupSection.jsx'
+import PremierLeagueSection from './components/PremierLeagueSection.jsx'
+import LaLigaSection from './components/LaLigaSection.jsx'
 import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
 import BestBetSection from './components/BestBetSection.jsx'
@@ -194,7 +195,7 @@ function Header({ auth, onLogout, navigate }) {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, onOdds, navigate }) {
+function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onIntl, onClub, onNBA, onWNBA, onOdds, navigate }) {
   return (
     <section className="hero">
       <div className="hero-bg" />
@@ -212,7 +213,8 @@ function Hero({ onBestBet, onDailyTips, onWC, onIntl, onClub, onNBA, onWNBA, onO
                 style={{ borderColor: 'rgba(0,208,132,0.4)', color: 'var(--green)' }}>
           🎯 Daily Odds
         </button>
-        <button className="btn-outline" onClick={onWC}>World Cup 2026</button>
+        <button className="btn-outline" onClick={onPL}>Premier League</button>
+        <button className="btn-outline" onClick={onLaLiga}>La Liga</button>
         <button className="btn-outline" onClick={onIntl}>Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
         <button className="btn-outline" onClick={onNBA}>🏀 NBA</button>
@@ -354,7 +356,8 @@ export default function App() {
               onBestBet={() => { setActive('best-bet');    scrollTo('best-bet')    }}
               onDailyTips={() => { setActive('daily-tips'); scrollTo('daily-tips') }}
               onOdds={()      => { setActive('odds-tips'); scrollTo('odds-tips')   }}
-              onWC={()        => { setActive('worldcup');   scrollTo('worldcup')   }}
+              onPL={()        => { setActive('premierleague'); scrollTo('premierleague') }}
+              onLaLiga={()    => { setActive('laliga');       scrollTo('laliga')       }}
               onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
               onClub={()      => { setActive('club');       scrollTo('club')       }}
               onNBA={()       => { setActive('nba');        scrollTo('nba-section')  }}
@@ -367,7 +370,9 @@ export default function App() {
             <div className="divider" />
             <DailyTipsSection />
             <div className="divider" />
-            <WorldCupSection />
+            <PremierLeagueSection />
+            <div className="divider" />
+            <LaLigaSection />
             <div className="divider" />
             <IntlSection />
             <div className="divider" />

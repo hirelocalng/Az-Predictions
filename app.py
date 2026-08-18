@@ -1587,13 +1587,21 @@ def _api_corners_prob(home_gs: float, away_gs: float,
 # ── Fetch fixtures helpers ────────────────────────────────────────────────────
 
 try:
-    from fetch_fixtures import get_daily_tips, get_club_tips, get_intl_tips
+    from fetch_fixtures import (
+        get_daily_tips, get_club_tips, get_intl_tips,
+        get_pl_tips, get_pl_next_match,
+        get_laliga_tips, get_laliga_next_match,
+    )
     print('fetch_fixtures imported OK', flush=True)
 except Exception as _ff_err:
     print(f'WARNING: fetch_fixtures import failed: {_ff_err}', flush=True)
     def get_daily_tips(*a, **kw): return []
     def get_club_tips(*a, **kw):  return []
     def get_intl_tips(*a, **kw):  return []
+    def get_pl_tips(*a, **kw):    return []
+    def get_pl_next_match(*a, **kw): return None
+    def get_laliga_tips(*a, **kw): return []
+    def get_laliga_next_match(*a, **kw): return None
 
 # ── Club feature builder ──────────────────────────────────────────────────────
 # BASE_FEATURES order must match train.py exactly.
@@ -3116,6 +3124,110 @@ def countdown():
     if next_match is None:
         next_match = {'seconds_remaining': 0, 'fixture': _WC_FIXTURES[0]}
     return jsonify(next_match)
+
+
+_PL_TIPS_CACHE: dict = {"data": None, "ts": 0.0}
+
+
+@app.route('/api/pl/fixtures')
+def pl_fixtures():
+    now_ts = time.time()
+    if _PL_TIPS_CACHE["data"] is None or (now_ts - _PL_TIPS_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            tips = get_pl_tips(_club_predict)
+            for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
+                _save_prediction(t)
+            _PL_TIPS_CACHE["data"] = tips
+            _PL_TIPS_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            app.logger.error("pl-fixtures fetch failed: %s", exc)
+            if _PL_TIPS_CACHE["data"] is None:
+                _PL_TIPS_CACHE["data"] = []
+    done = _completed_keys()
+    active = [t for t in (_PL_TIPS_CACHE["data"] or [])
+              if _match_key(t.get('home_team',''), t.get('away_team',''),
+                            (t.get('utc_kickoff','') or '')[:10]) not in done]
+    return jsonify(active)
+
+
+# Fallback used only if football-data.org is unreachable — the real 2026/27
+# season opener (confirmed fixture, in case the live API is down).
+_PL_COUNTDOWN_FALLBACK = {
+    'home': 'Arsenal', 'away': 'Coventry City',
+    'utc_kickoff': '2026-08-21T15:00:00+00:00',
+    'venue': 'Emirates Stadium',
+    'home_crest': '', 'away_crest': '',
+}
+_PL_COUNTDOWN_CACHE: dict = {"data": None, "ts": 0.0}
+_PL_COUNTDOWN_TTL = 3600  # 1 hour — the fixture list rarely changes
+
+
+@app.route('/api/pl/countdown')
+def pl_countdown():
+    now_ts = time.time()
+    if _PL_COUNTDOWN_CACHE["data"] is None or (now_ts - _PL_COUNTDOWN_CACHE["ts"]) > _PL_COUNTDOWN_TTL:
+        fixture = get_pl_next_match() or _PL_COUNTDOWN_FALLBACK
+        _PL_COUNTDOWN_CACHE["data"] = fixture
+        _PL_COUNTDOWN_CACHE["ts"]   = now_ts
+    fixture = _PL_COUNTDOWN_CACHE["data"]
+    now = datetime.now(timezone.utc)
+    try:
+        kickoff = datetime.fromisoformat(fixture['utc_kickoff'].replace('Z', '+00:00'))
+    except Exception:
+        kickoff = now
+    seconds_remaining = max(0, int((kickoff - now).total_seconds()))
+    return jsonify({'fixture': fixture, 'seconds_remaining': seconds_remaining})
+
+
+_LALIGA_TIPS_CACHE: dict = {"data": None, "ts": 0.0}
+
+
+@app.route('/api/laliga/fixtures')
+def laliga_fixtures():
+    now_ts = time.time()
+    if _LALIGA_TIPS_CACHE["data"] is None or (now_ts - _LALIGA_TIPS_CACHE["ts"]) > _CACHE_TTL:
+        try:
+            tips = get_laliga_tips(_club_predict)
+            for t in tips:
+                t['best_bet'] = _compute_best_bet(t)
+                _save_prediction(t)
+            _LALIGA_TIPS_CACHE["data"] = tips
+            _LALIGA_TIPS_CACHE["ts"]   = now_ts
+        except Exception as exc:
+            app.logger.error("laliga-fixtures fetch failed: %s", exc)
+            if _LALIGA_TIPS_CACHE["data"] is None:
+                _LALIGA_TIPS_CACHE["data"] = []
+    done = _completed_keys()
+    active = [t for t in (_LALIGA_TIPS_CACHE["data"] or [])
+              if _match_key(t.get('home_team',''), t.get('away_team',''),
+                            (t.get('utc_kickoff','') or '')[:10]) not in done]
+    return jsonify(active)
+
+
+_LALIGA_COUNTDOWN_CACHE: dict = {"data": None, "ts": 0.0}
+_LALIGA_COUNTDOWN_TTL = 3600  # 1 hour — the fixture list rarely changes
+
+
+@app.route('/api/laliga/countdown')
+def laliga_countdown():
+    now_ts = time.time()
+    if _LALIGA_COUNTDOWN_CACHE["data"] is None or (now_ts - _LALIGA_COUNTDOWN_CACHE["ts"]) > _LALIGA_COUNTDOWN_TTL:
+        # No hardcoded fallback fixture here (unlike PL) — we don't have a
+        # confirmed La Liga opener date, so an API miss just means "unknown"
+        # rather than a fabricated match.
+        _LALIGA_COUNTDOWN_CACHE["data"] = get_laliga_next_match()
+        _LALIGA_COUNTDOWN_CACHE["ts"]   = now_ts
+    fixture = _LALIGA_COUNTDOWN_CACHE["data"]
+    if not fixture:
+        return jsonify({'fixture': None, 'seconds_remaining': 0})
+    now = datetime.now(timezone.utc)
+    try:
+        kickoff = datetime.fromisoformat(fixture['utc_kickoff'].replace('Z', '+00:00'))
+    except Exception:
+        kickoff = now
+    seconds_remaining = max(0, int((kickoff - now).total_seconds()))
+    return jsonify({'fixture': fixture, 'seconds_remaining': seconds_remaining})
 
 
 @app.route('/api/debug/predict')

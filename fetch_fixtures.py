@@ -9,7 +9,7 @@ Endpoints used:
 import difflib
 import math
 import warnings
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pandas as pd
 import requests
@@ -189,7 +189,11 @@ def _load_history(league_code: str) -> pd.DataFrame:
     except Exception:
         pass
 
-    for csv_path, code in [("data/brazil_2025.csv", "BRA"), ("data/argentina_2025.csv", "ARG")]:
+    for csv_path, code in [
+        ("data/brazil_2025.csv", "BRA"),
+        ("data/brazil_2026_supplement.csv", "BRA"),
+        ("data/argentina_2025.csv", "ARG"),
+    ]:
         if league_code == code:
             try:
                 fb = pd.read_csv(csv_path).rename(columns={
@@ -401,6 +405,100 @@ def get_club_tips(club_predict_fn) -> list:
         tips.append(scored)
 
     return tips
+
+# ── Single-competition dedicated homepage sections (Premier League, La Liga) ──
+
+_SINGLE_COMP_WINDOW_DAYS = 10   # look this many days ahead for upcoming fixtures
+
+
+def _fetch_comp_window(comp_code: str, days: int) -> list:
+    """Non-finished football-data.org matches for one competition code over the next `days`."""
+    date_from = datetime.now().strftime("%Y-%m-%d")
+    date_to   = (datetime.now() + pd.Timedelta(days=days)).strftime("%Y-%m-%d")
+    r = requests.get(
+        _FD_URL, headers=_FD_HEADERS,
+        params={"competitions": comp_code, "dateFrom": date_from, "dateTo": date_to},
+        timeout=15,
+    )
+    r.raise_for_status()
+    matches = r.json().get("matches", [])
+    return [m for m in matches if not _is_finished(m)]
+
+
+def _get_comp_tips(comp_code: str, id_prefix: str, club_predict_fn) -> list:
+    """
+    Fetch upcoming fixtures (next _SINGLE_COMP_WINDOW_DAYS days) for one
+    football-data.org competition and score each through the general club
+    model (league code resolved via _COMP_TO_LEAGUE from the match itself).
+    No confidence floor; caller decides what to do with an empty list
+    (e.g. off-season).
+    """
+    try:
+        matches = _fetch_comp_window(comp_code, _SINGLE_COMP_WINDOW_DAYS)
+    except Exception:
+        matches = []
+
+    tips = []
+    for idx, match in enumerate(matches):
+        scored = _score_club_match(match, club_predict_fn)
+        if scored is None:
+            continue
+        scored["id"] = f"{id_prefix}{idx + 1}"
+        scored.pop("_conf", None)
+        tips.append(scored)
+
+    return tips
+
+
+def _get_comp_next_match(comp_code: str):
+    """
+    Return the next scheduled fixture for one competition (widest lookahead,
+    up to ~120 days so it works during the summer off-season) as a dict with
+    keys home, away, home_crest, away_crest, utc_kickoff, venue — or None if
+    the API is unreachable/returns nothing.
+    """
+    try:
+        matches = _fetch_comp_window(comp_code, 120)
+    except Exception:
+        return None
+    if not matches:
+        return None
+
+    def _kickoff(m):
+        try:
+            return datetime.fromisoformat(m.get("utcDate", "").replace("Z", "+00:00"))
+        except Exception:
+            return datetime(9999, 1, 1, tzinfo=timezone.utc)
+
+    matches.sort(key=_kickoff)
+    m = matches[0]
+    home, away = _extract_teams(m)
+    if not home or not away:
+        return None
+    return {
+        "home":        home,
+        "away":        away,
+        "home_crest":  _extract_logo(m, "home"),
+        "away_crest":  _extract_logo(m, "away"),
+        "utc_kickoff": _extract_utc_iso(m),
+        "venue":       (m.get("venue") or "").strip(),
+    }
+
+
+def get_pl_tips(club_predict_fn) -> list:
+    return _get_comp_tips("PL", "pl", club_predict_fn)
+
+
+def get_pl_next_match():
+    return _get_comp_next_match("PL")
+
+
+def get_laliga_tips(club_predict_fn) -> list:
+    return _get_comp_tips("PD", "ll", club_predict_fn)
+
+
+def get_laliga_next_match():
+    return _get_comp_next_match("PD")
 
 # ── TheSportsDB helpers ───────────────────────────────────────────────────────
 

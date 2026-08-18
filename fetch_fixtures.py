@@ -161,6 +161,31 @@ try:
 except Exception:
     pass
 
+# Pre-computed per-club ELO cache (most recent rating per club, from
+# data/EloRatings.csv via the one-off build in this repo's session notes).
+# EloRatings.csv itself isn't deployed (gitignored, large), so this small
+# derived cache is what actually ships to Railway.
+_TEAM_ELO_CACHE: dict = {}
+try:
+    import os as _os
+    _elo_path = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
+                              "data", "team_elo_cache.csv")
+    if _os.path.exists(_elo_path):
+        import pandas as _pd_elo
+        _ec = _pd_elo.read_csv(_elo_path)
+        _TEAM_ELO_CACHE = dict(zip(_ec["club"], _ec["elo"]))
+        del _pd_elo, _ec, _elo_path, _os
+except Exception:
+    pass
+
+
+def _team_elo(name: str):
+    """Resolve a team name against the ELO cache; None if no reasonable match."""
+    if name in _TEAM_ELO_CACHE:
+        return _TEAM_ELO_CACHE[name]
+    match = _resolve(name, list(_TEAM_ELO_CACHE.keys()))
+    return _TEAM_ELO_CACHE.get(match) if match else None
+
 
 def _load_history(league_code: str) -> pd.DataFrame:
     if league_code in _hist_cache:
@@ -338,9 +363,13 @@ def _score_club_match(match, club_predict_fn):
     form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
     form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
 
+    home_elo = _team_elo(home_name)
+    away_elo = _team_elo(away_name)
+    elo_diff = (home_elo - away_elo) if (home_elo is not None and away_elo is not None) else 0
+
     try:
         ph, pd_, pa, pg, pc = club_predict_fn(
-            hs, as_, 0, form5_h, form5_a, 2.60, 3.10, 2.80, league_code
+            hs, as_, elo_diff, form5_h, form5_a, 2.60, 3.10, 2.80, league_code
         )
     except Exception:
         return None
@@ -412,12 +441,20 @@ _SINGLE_COMP_WINDOW_DAYS = 10   # look this many days ahead for upcoming fixture
 
 
 def _fetch_comp_window(comp_code: str, days: int) -> list:
-    """Non-finished football-data.org matches for one competition code over the next `days`."""
+    """
+    Non-finished football-data.org matches for one competition code over the
+    next `days`. Uses the /v4/competitions/{code}/matches endpoint rather
+    than /v4/matches?competitions= — the latter rejects any date range over
+    10 days ("Specified period must not exceed 10 days"), which silently
+    broke the wide (~120 day) lookahead used by _get_comp_next_match during
+    the off-season / early in a season.
+    """
     date_from = datetime.now().strftime("%Y-%m-%d")
     date_to   = (datetime.now() + pd.Timedelta(days=days)).strftime("%Y-%m-%d")
     r = requests.get(
-        _FD_URL, headers=_FD_HEADERS,
-        params={"competitions": comp_code, "dateFrom": date_from, "dateTo": date_to},
+        f"https://api.football-data.org/v4/competitions/{comp_code}/matches",
+        headers=_FD_HEADERS,
+        params={"dateFrom": date_from, "dateTo": date_to},
         timeout=15,
     )
     r.raise_for_status()

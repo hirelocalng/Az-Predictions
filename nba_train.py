@@ -47,7 +47,10 @@ _ABBR_NORM = {
     'GS':   'GSV',  # Golden State Valkyries (2025 expansion)
 }
 # All-Star / exhibition pseudo-team codes to exclude from training
-_EXHIBITION = {'CLA', 'COL', 'USA', 'WNBASTARS', 'STE', 'WIL', 'ALL'}
+_EXHIBITION = {'CLA', 'COL', 'USA', 'WNBASTARS', 'STE', 'WIL', 'ALL',
+               'NIGER', 'JPN', 'COOP', 'SPO'}  # 2026 preseason intl games + All-Star captains' teams
+
+WNBA_SUPPLEMENT_PATH = 'data/wnba_2026_supplement.csv'  # ESPN backfill, 2025-09-15 -> present
 MIN_YEAR_NBA  = 2000
 TEST_SPLIT    = 0.20
 
@@ -406,6 +409,37 @@ def load_wnba_v2():
         tov        = ('turnovers',                  'sum'),
         fta        = ('free_throws_attempted',      'sum'),
     ).reset_index()
+
+    # ── Backfill supplement (2025-09-15 -> present, from fetch_wnba_supplement.py) ──
+    # Already one row per (game_id, team) — no player-level aggregation needed,
+    # just line up with tg's post-aggregation schema and concat before rolling.
+    if os.path.exists(WNBA_SUPPLEMENT_PATH):
+        supp = pd.read_csv(WNBA_SUPPLEMENT_PATH, low_memory=False)
+        supp['game_date'] = pd.to_datetime(supp['game_date'], errors='coerce')
+        supp = supp.dropna(subset=['game_date', 'team_score', 'opponent_team_score'])
+        supp = supp[supp['season_type'].isin([2, 3])].copy()
+        supp = supp[~supp['team_abbreviation'].isin(_EXHIBITION) &
+                    ~supp['opponent_team_abbreviation'].isin(_EXHIBITION)].copy()
+        supp['team_abbreviation']          = supp['team_abbreviation'].map(
+            lambda a: _ABBR_NORM.get(a, a))
+        supp['opponent_team_abbreviation'] = supp['opponent_team_abbreviation'].map(
+            lambda a: _ABBR_NORM.get(a, a))
+        supp_tg = supp.rename(columns={
+            'opponent_team_abbreviation': 'opp_abbr',
+            'field_goals_attempted':      'fga',
+            'offensive_rebounds':         'oreb',
+            'turnovers':                  'tov',
+            'free_throws_attempted':      'fta',
+        })[['game_id', 'team_abbreviation', 'game_date', 'season', 'home_away',
+            'team_score', 'opponent_team_score', 'team_winner', 'opp_abbr',
+            'fga', 'oreb', 'tov', 'fta']].rename(columns={
+                'opponent_team_score': 'opp_score',
+        })
+        before = len(tg)
+        tg = pd.concat([tg, supp_tg], ignore_index=True)
+        tg = tg.drop_duplicates(subset=['game_id', 'team_abbreviation'], keep='first')
+        print(f"  + WNBA supplement: {len(tg) - before:,} team-game rows "
+              f"({supp_tg['game_date'].min().date()} - {supp_tg['game_date'].max().date()})")
 
     # ── Offensive rating (pts per 100 estimated possessions) ─────────────────
     poss = (tg['fga'] - tg['oreb'] + tg['tov'] + 0.44 * tg['fta']).clip(lower=1)

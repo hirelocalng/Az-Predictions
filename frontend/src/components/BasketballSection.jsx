@@ -4,6 +4,8 @@ import SavePredictionButton from './SavePredictionButton.jsx'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 function dateLabel(dateStr) {
   const now     = new Date()
   const todayMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
@@ -36,9 +38,10 @@ function localKickoff(dateStr, timeStr) {
   try {
     const dt = new Date(`${dateStr}T${m[1].padStart(2, '0')}:${m[2]}:00Z`)
     if (isNaN(dt.getTime())) return null
-    return new Intl.DateTimeFormat([], {
+    const time = new Intl.DateTimeFormat([], {
       hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
     }).format(dt)
+    return `${dt.getDate()} ${MONTHS[dt.getMonth()]}, ${time}`
   } catch { return null }
 }
 

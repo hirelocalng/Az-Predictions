@@ -1,6 +1,8 @@
 import { useLiveScores } from '../contexts/LiveScoresContext.jsx'
 import SavePredictionButton from './SavePredictionButton.jsx'
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
 function pct(v) { return v != null ? `${(v * 100).toFixed(1)}%` : '—' }
 
 function StatBar({ label, value, color = 'green', extra }) {
@@ -70,11 +72,19 @@ export default function PredictionCard({ tip, isWC }) {
   const isLive    = Boolean(liveData) || tip.status === 'IN_PLAY' || tip.status === 'PAUSED'
     || Boolean(kickoffMs && now >= kickoffMs && now < kickoffMs + 120 * 60_000)
 
-  // Time display
+  // Time display — date + local kickoff time (same local-timezone approach as
+  // the Premier League / La Liga countdown components: new Date(iso), no
+  // explicit timeZone override, so it renders in the viewer's own timezone)
   let timeDisplay = '—'
   if (tip.utc_kickoff) {
     const d = new Date(tip.utc_kickoff)
-    timeDisplay = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    timeDisplay = `${d.getDate()} ${MONTHS[d.getMonth()]}, ${time}`
+  } else if (tip.date && tip.time) {
+    const d = new Date(`${tip.date}T00:00:00`)
+    timeDisplay = isNaN(d.getTime())
+      ? tip.time
+      : `${d.getDate()} ${MONTHS[d.getMonth()]}, ${tip.time}`
   } else if (tip.time) {
     timeDisplay = tip.time
   }

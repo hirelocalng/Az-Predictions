@@ -475,11 +475,15 @@ def _score_club_match(match, club_predict_fn):
 
 def get_club_tips(club_predict_fn) -> list:
     """
-    Fetch today's matches from football-data.org, filter to domestic club
-    competitions, run predictions, return all scored matches (no confidence
-    floor — callers decide whether to show 'no matches' message).
+    Fetch the next 9 days of matches from football-data.org (not just
+    today — a single quiet day left this returning nothing for entire
+    leagues, e.g. Brasileirão, whose next fixture might be 2-3 days out),
+    filter to domestic club competitions, run predictions, return all
+    scored matches (no confidence floor — callers decide whether to show
+    'no matches' message; each card carries its own utc_kickoff so the
+    frontend can show/sort by date).
     """
-    matches = _fetch_today()
+    matches = _fetch_window(9)
     tips = []
 
     for idx, match in enumerate(matches):

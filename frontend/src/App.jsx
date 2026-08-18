@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { initOneSignal, oneSignalLogin, oneSignalLogout } from './notifications.js'
 import PremierLeagueSection from './components/PremierLeagueSection.jsx'
 import LaLigaSection from './components/LaLigaSection.jsx'
-import IntlSection from './components/IntlSection.jsx'
 import ClubSection from './components/ClubSection.jsx'
 import BestBetSection from './components/BestBetSection.jsx'
 import DailyTipsSection from './components/DailyTipsSection.jsx'
@@ -195,7 +194,7 @@ function Header({ auth, onLogout, navigate }) {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onIntl, onClub, onNBA, onWNBA, onOdds, navigate }) {
+function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onClub, onNBA, onWNBA, onOdds, navigate }) {
   return (
     <section className="hero">
       <div className="hero-bg" />
@@ -215,7 +214,6 @@ function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onIntl, onClub, onNBA, o
         </button>
         <button className="btn-outline" onClick={onPL}>Premier League</button>
         <button className="btn-outline" onClick={onLaLiga}>La Liga</button>
-        <button className="btn-outline" onClick={onIntl}>Internationals</button>
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
         <button className="btn-outline" onClick={onNBA}>🏀 NBA</button>
         <button className="btn-outline" onClick={onWNBA}>🏀 WNBA</button>
@@ -358,7 +356,6 @@ export default function App() {
               onOdds={()      => { setActive('odds-tips'); scrollTo('odds-tips')   }}
               onPL={()        => { setActive('premierleague'); scrollTo('premierleague') }}
               onLaLiga={()    => { setActive('laliga');       scrollTo('laliga')       }}
-              onIntl={()      => { setActive('intl');       scrollTo('intl')       }}
               onClub={()      => { setActive('club');       scrollTo('club')       }}
               onNBA={()       => { setActive('nba');        scrollTo('nba-section')  }}
               onWNBA={()      => { setActive('wnba');       scrollTo('wnba-section') }}
@@ -373,8 +370,6 @@ export default function App() {
             <PremierLeagueSection />
             <div className="divider" />
             <LaLigaSection />
-            <div className="divider" />
-            <IntlSection />
             <div className="divider" />
             <BasketballSection />
             <div className="divider" />

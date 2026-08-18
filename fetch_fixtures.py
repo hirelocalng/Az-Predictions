@@ -136,6 +136,25 @@ def _fetch_today() -> list:
     matches = r.json().get("matches", [])
     return [m for m in matches if not _is_finished(m)]
 
+
+def _fetch_window(days: int) -> list:
+    """
+    Non-finished football-data.org matches across ALL tracked competitions,
+    from today through the next `days` days (football-data.org caps any
+    single date range at 10 days). Used by get_daily_tips() to fall through
+    to the nearest upcoming matchday when today itself has nothing on.
+    """
+    date_from = datetime.now().strftime("%Y-%m-%d")
+    date_to   = (datetime.now() + pd.Timedelta(days=days)).strftime("%Y-%m-%d")
+    r = requests.get(
+        _FD_URL, headers=_FD_HEADERS,
+        params={"dateFrom": date_from, "dateTo": date_to},
+        timeout=15,
+    )
+    r.raise_for_status()
+    matches = r.json().get("matches", [])
+    return [m for m in matches if not _is_finished(m)]
+
 # ── Historical club stats ─────────────────────────────────────────────────────
 
 _hist_cache: dict = {}
@@ -792,7 +811,10 @@ def get_intl_tips(wc_predict_fn) -> list:
 
 def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
     """
-    Fetch today's matches, score every match, return the top 5 by confidence.
+    Score matches across every tracked competition and return the top 5 by
+    confidence — today's fixtures if there are any scoreable ones, otherwise
+    the nearest upcoming matchday within the next 9 days (a quiet weekday
+    with no fixtures anywhere shouldn't just return an empty list).
 
     Sources (merged, deduplicated):
       1. football-data.org  — club leagues, WCQ, Nations League, etc.
@@ -802,9 +824,9 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
     results = []
     seen    = set()   # _norm_pair keys to avoid duplicates across sources
 
-    # ── Source 1: football-data.org ───────────────────────────────────────────
+    # ── Source 1: football-data.org (9-day window, not just today) ───────────
     try:
-        fd_matches = _fetch_today()
+        fd_matches = _fetch_window(9)
     except Exception:
         fd_matches = []
 
@@ -942,6 +964,19 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
     # Drop any result whose kickoff date is before today (stale data guard)
     results = [r for r in results
                if not r.get("utc_kickoff") or r["utc_kickoff"][:10] >= today]
+
+    # If today has no scoreable fixtures, fall through to the nearest
+    # upcoming matchday (the earliest date present among the results) rather
+    # than returning an empty list — same information, just not today.
+    dated = [r for r in results if r.get("utc_kickoff")]
+    if dated:
+        todays = [r for r in dated if r["utc_kickoff"][:10] == today]
+        if todays:
+            results = todays + [r for r in results if not r.get("utc_kickoff")]
+        else:
+            nearest_date = min(r["utc_kickoff"][:10] for r in dated)
+            results = [r for r in dated if r["utc_kickoff"][:10] == nearest_date]
+
     results.sort(key=lambda x: x["_conf"], reverse=True)
     out = results[:_MAX_TIPS]
     for p in out:

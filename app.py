@@ -18,7 +18,7 @@ Run:
 from flask import Flask, jsonify, send_from_directory, request, g, session
 from flask_cors import CORS
 from contextlib import contextmanager
-import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading, secrets, functools, re
+import os, sys, pickle, warnings, time, logging, math, difflib, unicodedata, json, threading, secrets, functools, re, hmac, hashlib
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -165,6 +165,29 @@ def _init_db():
                     created_at TIMESTAMPTZ DEFAULT NOW()
                 )
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS payments (
+                    id            SERIAL PRIMARY KEY,
+                    reference     VARCHAR(100) UNIQUE NOT NULL,
+                    user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    plan          VARCHAR(20),
+                    amount        NUMERIC(10,2),
+                    currency      VARCHAR(10) DEFAULT 'NGN',
+                    status        VARCHAR(20) NOT NULL DEFAULT 'initialized',
+                    days_granted  INTEGER,
+                    premium_until TIMESTAMPTZ,
+                    source        VARCHAR(20),
+                    raw_payload   JSONB,
+                    created_at    TIMESTAMPTZ DEFAULT NOW(),
+                    processed_at  TIMESTAMPTZ
+                )
+            """)
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status)"
+            )
             for _col in [
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS match_status VARCHAR(20) DEFAULT 'SCHEDULED'",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_home_score INTEGER",
@@ -5170,6 +5193,130 @@ _PLAN_AMOUNTS = {
     'monthly': 5_000,
     '3month':  15_000,
 }
+_PLAN_DAYS = {'1week': 7, 'monthly': 30, '3month': 90}
+
+
+def _plan_days(plan, amount):
+    """Resolve a plan id (preferred) or a raw Naira amount (fallback) to a day count."""
+    if plan in _PLAN_DAYS:
+        return _PLAN_DAYS[plan]
+    if amount >= 14_000:
+        return 90
+    if amount and amount <= 2_000:
+        return 7
+    return 30
+
+
+def _user_row_to_dict(row):
+    if row is None:
+        return None
+    return {
+        'id': row[0], 'name': row[1], 'email': row[2],
+        'is_premium': bool(row[3]),
+        'premium_until': row[4].isoformat() if row[4] else None,
+    }
+
+
+def _verify_korapay_signature(raw_body: bytes, signature: str) -> bool:
+    """
+    Korapay signs webhooks as HMAC-SHA256(secretKey, JSON-encoded `data` field
+    only — not the whole envelope), sent in the x-korapay-signature header.
+    Uses the SECRET key (never the public key) and a constant-time compare.
+    """
+    if not signature or not _KORAPAY_SECRET:
+        return False
+    try:
+        payload = json.loads(raw_body)
+    except Exception:
+        return False
+    data = payload.get('data')
+    if not isinstance(data, dict):
+        return False
+    encoded = json.dumps(data, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    expected = hmac.new(_KORAPAY_SECRET.encode('utf-8'), encoded, hashlib.sha256).hexdigest()
+    try:
+        return hmac.compare_digest(expected, signature)
+    except Exception:
+        return False
+
+
+def _process_successful_charge(reference, plan, amount, raw_payload, source):
+    """
+    Idempotently grant premium for a successful Korapay charge.
+
+    Safe to call more than once for the same reference — the webhook can be
+    retried by Korapay, and the client's /verify call can race the webhook.
+    Only the first caller that finds the payments row not already 'success'
+    performs the grant; every later call is a no-op that returns the same
+    (already-current) user. Extends from the later of "now" or the user's
+    existing premium_until, so a renewal never loses paid-for time.
+
+    Returns (ok: bool, user: dict|None, reason: str).
+    """
+    with _db() as (conn, cur):
+        if conn is None:
+            return False, None, 'db_unavailable'
+
+        cur.execute(
+            "SELECT user_id, status, plan FROM payments WHERE reference=%s FOR UPDATE",
+            (reference,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            _log.warning(
+                'Charge rejected: unknown reference=%s amount=%r type=%s plan=%s source=%s',
+                reference, amount, type(amount).__name__, plan, source)
+            return False, None, 'unknown_reference'
+
+        user_id, status, stored_plan = row
+        if status == 'success':
+            _log.info('Idempotent replay ignored: reference=%s already processed (source=%s)',
+                      reference, source)
+            cur.execute(
+                "SELECT id,name,email,is_premium,premium_until FROM users WHERE id=%s",
+                (user_id,)
+            )
+            return True, _user_row_to_dict(cur.fetchone()), 'already_processed'
+
+        plan = (plan or stored_plan or '').lower()
+        days = _plan_days(plan, amount)
+
+        expected = _PLAN_AMOUNTS.get(plan)
+        if expected is not None and amount and abs(amount - expected) > 1:
+            _log.warning('Amount mismatch: reference=%s plan=%s expected=%s got=%s (%s)',
+                         reference, plan, expected, amount, type(amount).__name__)
+
+        cur.execute("SELECT premium_until FROM users WHERE id=%s FOR UPDATE", (user_id,))
+        urow = cur.fetchone()
+        if urow is None:
+            _log.warning('Charge rejected: reference=%s -> user_id=%s no longer exists',
+                         reference, user_id)
+            return False, None, 'user_not_found'
+
+        now_u         = datetime.now(timezone.utc)
+        current_until = urow[0]
+        base    = current_until if (current_until and current_until > now_u) else now_u
+        expires = base + timedelta(days=days)
+
+        cur.execute(
+            'UPDATE users SET is_premium=TRUE, premium_until=%s WHERE id=%s',
+            (expires, user_id)
+        )
+        cur.execute(
+            "UPDATE payments SET status='success', plan=%s, amount=%s, days_granted=%s, "
+            "premium_until=%s, source=%s, raw_payload=%s::jsonb, processed_at=NOW() "
+            "WHERE reference=%s",
+            (plan, amount, days, expires, source, json.dumps(raw_payload or {}), reference)
+        )
+        _log.info('Premium granted: reference=%s user_id=%s plan=%s amount=%s days=%d '
+                  'expires=%s source=%s', reference, user_id, plan, amount, days,
+                  expires.date(), source)
+
+        cur.execute(
+            "SELECT id,name,email,is_premium,premium_until FROM users WHERE id=%s",
+            (user_id,)
+        )
+        return True, _user_row_to_dict(cur.fetchone()), 'granted'
 
 
 @app.route('/api/payment/initialize', methods=['POST'])
@@ -5183,6 +5330,21 @@ def payment_initialize():
     plan   = body.get('plan', 'monthly')
     amount = _PLAN_AMOUNTS.get(plan, _PLAN_AMOUNTS['monthly'])
     ref    = f"azpred_{user['id']}_{secrets.token_hex(8)}"
+
+    # Record the attempt up front so a webhook/verify call for this reference
+    # always has a row to match against (the idempotency guard in
+    # _process_successful_charge rejects references it's never seen).
+    try:
+        with _db() as (conn, cur):
+            if conn is not None:
+                cur.execute(
+                    "INSERT INTO payments (reference, user_id, plan, amount, currency, status) "
+                    "VALUES (%s,%s,%s,%s,'NGN','initialized') ON CONFLICT (reference) DO NOTHING",
+                    (ref, user['id'], plan, amount)
+                )
+    except Exception as e:
+        _log.warning('payment_initialize: could not record payments row ref=%s: %s', ref, e)
+
     # Build redirect URL back to /subscribe so the callback is caught by React
     base        = request.host_url.rstrip('/')
     redirect_url = f"{base}/subscribe"
@@ -5206,25 +5368,87 @@ def payment_initialize():
             timeout=15,
         )
         if r.status_code not in (200, 201):
+            _log.warning('payment_initialize: Korapay init HTTP %s ref=%s body=%s',
+                         r.status_code, ref, r.text[:300])
             return jsonify({'error': 'Korapay initialization failed', 'detail': r.text}), 502
         data = r.json().get('data', {})
         checkout_url = data.get('checkout_url') or data.get('authorization_url')
         if not checkout_url:
+            _log.warning('payment_initialize: no checkout_url ref=%s data=%r', ref, data)
             return jsonify({'error': 'No checkout URL returned by Korapay'}), 502
         return jsonify({'checkout_url': checkout_url, 'reference': ref})
     except Exception as e:
+        _log.warning('payment_initialize error: ref=%s %s', ref, e)
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/payment/webhook', methods=['POST'])
+def payment_webhook():
+    """Server-to-server Korapay notification — the source of truth for premium
+    grants. Configure this URL (POST, `<APP_URL>/api/payment/webhook`) in the
+    Korapay dashboard. Idempotent and independent of whether the customer's
+    browser ever makes it back to /subscribe."""
+    raw       = request.get_data()
+    sig       = request.headers.get('x-korapay-signature', '')
+    payload   = request.get_json(silent=True) or {}
+    data      = payload.get('data') or {}
+    reference = data.get('reference', '')
+
+    if not _verify_korapay_signature(raw, sig):
+        _log.warning('Webhook rejected: bad/missing signature reference=%s',
+                     reference or '(missing)')
+        return jsonify({'error': 'invalid signature'}), 401
+
+    event = payload.get('event', '')
+    if event != 'charge.success':
+        _log.info('Webhook ignored: event=%r reference=%s', event, reference or '(missing)')
+        return jsonify({'status': 'ignored'}), 200
+
+    if not reference:
+        _log.warning('Webhook rejected: charge.success with no reference, payload=%r', payload)
+        return jsonify({'error': 'missing reference'}), 400
+
+    if data.get('status') != 'success':
+        _log.info('Webhook ignored: reference=%s data.status=%r (not success)',
+                  reference, data.get('status'))
+        return jsonify({'status': 'ignored'}), 200
+
+    try:
+        amount = float(data.get('amount') or 0)
+    except (TypeError, ValueError):
+        _log.warning('Webhook: reference=%s non-numeric amount=%r (type=%s)',
+                     reference, data.get('amount'), type(data.get('amount')).__name__)
+        amount = 0.0
+
+    meta = data.get('metadata') or {}
+    plan = str(meta.get('plan', '')).lower()
+
+    ok, _user, reason = _process_successful_charge(
+        reference=reference, plan=plan, amount=amount, raw_payload=payload, source='webhook')
+    if not ok:
+        _log.warning('Webhook processing failed: reference=%s reason=%s amount=%s plan=%s',
+                     reference, reason, amount, plan)
+    # 200 regardless of business-logic outcome so Korapay doesn't retry-storm
+    # a reference we can never resolve (signature failures above still 4xx).
+    return jsonify({'status': 'ok' if ok else reason}), 200
 
 
 @app.route('/api/payment/verify')
 def payment_verify():
+    """Client-driven fast path: called when the browser lands back on
+    /subscribe. Shares _process_successful_charge with the webhook, so
+    whichever of the two arrives first performs the grant and the other
+    is a no-op — this is a UX accelerant, not the source of truth."""
     user = _get_current_user()
     if not user:
+        _log.warning('payment_verify rejected: unauthorized request')
         return jsonify({'error': 'Unauthorized'}), 401
     reference = request.args.get('reference', '')
     if not reference:
+        _log.warning('payment_verify rejected: missing reference, user_id=%s', user['id'])
         return jsonify({'error': 'Reference required'}), 400
     if not _KORAPAY_SECRET:
+        _log.warning('payment_verify rejected: Korapay not configured, reference=%s', reference)
         return jsonify({'error': 'Payment not configured'}), 503
     import requests as _req
     try:
@@ -5234,41 +5458,34 @@ def payment_verify():
             timeout=10,
         )
         if r.status_code != 200:
+            _log.warning('payment_verify: Korapay verify HTTP %s reference=%s body=%s',
+                         r.status_code, reference, r.text[:300])
             return jsonify({'error': 'Korapay verification failed', 'detail': r.text}), 502
         data = r.json().get('data', {})
-        _log.info('Korapay verify raw: status=%s amount=%r metadata=%r',
-                  data.get('status'), data.get('amount'), data.get('metadata'))
+        _log.info('Korapay verify raw: reference=%s status=%s amount=%r type=%s metadata=%r',
+                  reference, data.get('status'), data.get('amount'),
+                  type(data.get('amount')).__name__, data.get('metadata'))
         if data.get('status') != 'success':
+            _log.warning('payment_verify: reference=%s not successful, status=%s',
+                         reference, data.get('status'))
             return jsonify({'error': 'Payment not successful', 'status': data.get('status')}), 400
-        # Cast amount to float — Korapay may return it as a string
         try:
             amount = float(data.get('amount') or 0)
         except (ValueError, TypeError):
+            _log.warning('payment_verify: reference=%s non-numeric amount=%r',
+                         reference, data.get('amount'))
             amount = 0.0
-        # Prefer plan from metadata; fall back to amount threshold
         meta = data.get('metadata') or {}
         plan = str(meta.get('plan', '')).lower()
-        if plan == '1week':
-            days = 7
-        elif plan == '3month' or amount >= 14_000:
-            days = 90
-        else:
-            days = 30
-        now_u   = datetime.now(timezone.utc)
-        expires = now_u + timedelta(days=days)
-        _log.info('Granting premium: user_id=%s plan=%s amount=%s days=%d expires=%s',
-                  user['id'], plan or 'amount-based', amount, days, expires.date())
-        with _db() as (conn, cur):
-            if conn is None:
-                return jsonify({'error': 'DB unavailable'}), 503
-            cur.execute(
-                'UPDATE users SET is_premium=TRUE,premium_until=%s WHERE id=%s',
-                (expires, user['id'])
-            )
-        updated = _get_current_user()
-        return jsonify({'success': True, 'user': updated or user})
+
+        ok, updated_user, reason = _process_successful_charge(
+            reference=reference, plan=plan, amount=amount, raw_payload=data, source='verify')
+        if not ok:
+            _log.warning('payment_verify: grant failed reference=%s reason=%s', reference, reason)
+            return jsonify({'error': f'Could not confirm payment ({reason})'}), 409
+        return jsonify({'success': True, 'user': updated_user or user})
     except Exception as e:
-        _log.warning('payment_verify error: %s', e)
+        _log.warning('payment_verify error: reference=%s %s', reference, e)
         return jsonify({'error': str(e)}), 500
 
 

@@ -1628,14 +1628,20 @@ except Exception as _ff_err:
 
 # ── Club feature builder ──────────────────────────────────────────────────────
 # BASE_FEATURES order must match train.py exactly.
+#
+# No odds features (imp_h/imp_d/imp_a/book_margin) — there is no live
+# pre-match odds feed for upcoming fixtures, only historical closing odds
+# in Matches.csv. Feeding the model a constant fake odds triple for every
+# live fixture flattened every prediction toward a near-uniform split
+# regardless of the real matchup (2026-08-21 incident). Models were
+# retrained on the odds-free feature set (see train.py BASE_FEATURES /
+# retrain_no_odds.py) so training matches what serving can actually provide.
 
-def _club_feat(h, a, elo_diff, form5_h, form5_a, oh, od, oa, league_enc):
-    """Returns (base_X [26 features], corner_X [28 features])."""
+def _club_feat(h, a, elo_diff, form5_h, form5_a, league_enc):
+    """Returns (base_X [22 features], corner_X [24 features])."""
     h_pts      = 3 * h['win'] + h['draw']
     a_pts      = 3 * a['win'] + a['draw']
     elo_prob_h = 1 / (1 + 10 ** (-elo_diff / 400))
-    ih, id_, ia = 1/oh, 1/od, 1/oa
-    rs = ih + id_ + ia
     base = [
         h['gf'], h['ga'], h['gf'] - h['ga'],
         h.get('sot', 4.5),
@@ -1645,16 +1651,15 @@ def _club_feat(h, a, elo_diff, form5_h, form5_a, oh, od, oa, league_enc):
         a['win'], a['draw'], a_pts, a.get('awn', max(a['win'] - 0.12, 0.0)),
         elo_diff, elo_prob_h,
         form5_h, form5_a, form5_h - form5_a,
-        ih / rs, id_ / rs, ia / rs, rs - 1.0,
         float(league_enc),
     ]
     corner_ext = base + [h.get('corners', 5.2), a.get('corners', 4.8)]
     return np.array([base]), np.array([corner_ext])
 
 
-def _club_predict(h, a, elo_diff, form5_h, form5_a, oh, od, oa, league_code):
+def _club_predict(h, a, elo_diff, form5_h, form5_a, league_code):
     enc    = LEAGUE_MAP.get(league_code, 10)
-    X, Xc  = _club_feat(h, a, elo_diff, form5_h, form5_a, oh, od, oa, enc)
+    X, Xc  = _club_feat(h, a, elo_diff, form5_h, form5_a, enc)
 
     # Result  classes_=['A','D','H']  → idx [0,1,2]
     rp  = club_result['model'].predict_proba(X)[0]   if club_result  else [0.3, 0.25, 0.45]

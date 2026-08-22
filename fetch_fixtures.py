@@ -164,6 +164,22 @@ _DEFAULT_STATS = {
     "win": 0.33, "draw": 0.27, "hwn": 0.40, "awn": 0.25,
 }
 
+# A team with genuinely zero historical rows anywhere (never observed in any
+# league we track) falls back to _DEFAULT_STATS above -- a plausible
+# "average team" prior. But a team that HAS history, just none of it recent
+# (promoted after a long absence -- e.g. Coventry's last E0 match was 2001),
+# should not have that stale history quietly presented as "current form".
+# Promoted/newly-returned teams are also NOT average: they historically
+# underperform the division. This prior is the average of every top-flight
+# team's first 5 E0 games immediately after any promotion/return with a gap
+# of >400 days since their previous E0 appearance (25 such events, 2000-2025,
+# computed from data/Matches.csv during the 2026-27 pre-season data audit).
+PROMOTED_TEAM_PRIOR = {
+    "gf": 1.01, "ga": 1.65, "sot": 4.20, "corners": 4.45,
+    "win": 0.22, "draw": 0.27, "hwn": 0.30, "awn": 0.13,
+}
+_STALE_HISTORY_DAYS = 400  # older than this -> treat as no current-era history
+
 # Pre-computed form cache (from train.py _build_form_cache).
 # Used as fallback when data/Matches.csv is not present on Railway.
 _CLUB_FORM_CACHE: dict = {}
@@ -205,6 +221,30 @@ def _team_elo(name: str):
         return _TEAM_ELO_CACHE[name]
     match = _resolve(name, list(_TEAM_ELO_CACHE.keys()))
     return _TEAM_ELO_CACHE.get(match) if match else None
+
+
+_ELO_CACHE_MEAN = (sum(_TEAM_ELO_CACHE.values()) / len(_TEAM_ELO_CACHE)
+                    if _TEAM_ELO_CACHE else 1500.0)
+
+
+def _elo_diff_safe(home_name: str, away_name: str) -> float:
+    """
+    home_elo - away_elo, but never silently collapses to 0 (exact-parity)
+    just because one side is missing from the cache -- that used to happen
+    for any team _team_elo() couldn't resolve, telling the model "these two
+    teams are exactly equally rated" with no signal anything was missing.
+    A missing side is defaulted to the cache-wide average Elo instead, and
+    logged so it's visible rather than silent.
+    """
+    home_elo = _team_elo(home_name)
+    away_elo = _team_elo(away_name)
+    if home_elo is None or away_elo is None:
+        missing = [n for n, e in ((home_name, home_elo), (away_name, away_elo)) if e is None]
+        print(f"[fetch_fixtures] WARNING: no Elo cache match for {missing} -- "
+              f"defaulting to cache average ({_ELO_CACHE_MEAN:.0f}) instead of forcing diff=0")
+        home_elo = _ELO_CACHE_MEAN if home_elo is None else home_elo
+        away_elo = _ELO_CACHE_MEAN if away_elo is None else away_elo
+    return home_elo - away_elo
 
 
 def _load_history(league_code: str) -> pd.DataFrame:
@@ -329,6 +369,15 @@ def _rolling(df: pd.DataFrame, team: str, n: int = 5) -> dict:
             return dict(_CLUB_FORM_CACHE[team])
         return dict(_DEFAULT_STATS)
 
+    # Team has history, but is it CURRENT? A promoted team returning after a
+    # long absence (e.g. Coventry's most recent E0 row is from 2001) would
+    # otherwise have that decades-stale form silently presented as "recent
+    # form" with no signal to the model that anything is off. Fall back to
+    # the promoted-team prior instead of quietly serving ancient results.
+    days_since_last = (pd.Timestamp(datetime.now(timezone.utc).date()) - recent["date"].max()).days
+    if days_since_last > _STALE_HISTORY_DAYS:
+        return dict(PROMOTED_TEAM_PRIOR)
+
     gf = ga = sot_s = sot_n = cor_s = cor_n = 0.0
     wins = draws = pts = hwin = hgames = awin = agames = 0
 
@@ -430,13 +479,17 @@ def _score_club_match(match, club_predict_fn):
     form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
     form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
 
-    home_elo = _team_elo(home_name)
-    away_elo = _team_elo(away_name)
-    elo_diff = (home_elo - away_elo) if (home_elo is not None and away_elo is not None) else 0
+    elo_diff = _elo_diff_safe(home_name, away_name)
 
+    # No live pre-match odds feed exists for upcoming fixtures (only
+    # historical closing odds in Matches.csv) — this used to be faked with
+    # a hardcoded 2.60/3.10/2.80 triple, which flattened every prediction
+    # toward a near-uniform split regardless of the real matchup (2026-08-21
+    # incident). Models are trained odds-free now (train.py BASE_FEATURES);
+    # no odds are fetched, computed, or displayed anywhere in this path.
     try:
         ph, pd_, pa, pg, pc = club_predict_fn(
-            hs, as_, elo_diff, form5_h, form5_a, 2.60, 3.10, 2.80, league_code
+            hs, as_, elo_diff, form5_h, form5_a, league_code
         )
     except Exception:
         return None
@@ -445,11 +498,11 @@ def _score_club_match(match, club_predict_fn):
 
     best_prob = max(ph, pd_, pa)
     if best_prob == ph:
-        bet = {"label": f"{home_name} Win", "odds": 2.60, "confidence": round(ph, 4)}
+        bet = {"label": f"{home_name} Win", "confidence": round(ph, 4)}
     elif best_prob == pa:
-        bet = {"label": f"{away_name} Win", "odds": 2.80, "confidence": round(pa, 4)}
+        bet = {"label": f"{away_name} Win", "confidence": round(pa, 4)}
     else:
-        bet = {"label": "Draw", "odds": 3.10, "confidence": round(pd_, 4)}
+        bet = {"label": "Draw", "confidence": round(pd_, 4)}
 
     return {
         "league":       comp_name,

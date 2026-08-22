@@ -34,6 +34,8 @@ from sklearn.metrics import accuracy_score
 from sklearn.preprocessing import LabelEncoder
 from xgboost import XGBClassifier
 
+import epl_data
+
 warnings.filterwarnings("ignore")
 
 DATA_DIR  = "data"
@@ -44,6 +46,16 @@ TUNE_ITER = 40   # RandomizedSearchCV iterations
 # Feature lists  (order is significant — predict.py must match exactly)
 # ---------------------------------------------------------------------------
 
+
+ODDS_FEATURES = ["imp_h", "imp_d", "imp_a", "book_margin"]
+
+# No live pre-match odds feed exists for upcoming fixtures (only historical
+# closing odds in Matches.csv) — serving code was faking imp_h/imp_d/imp_a/
+# book_margin with a hardcoded constant triple for every fixture, which
+# flattened every live prediction toward a near-uniform split (see
+# 2026-08-21 incident: azpredicts.com showing 34/34/31 for Arsenal-Coventry).
+# BASE_FEATURES is odds-free so training always matches what serving can
+# actually provide at prediction time.
 BASE_FEATURES = [
     # Rolling team stats (last N games, shift-1 — no leakage)
     "h_r_gf",  "h_r_ga",  "h_r_gd",          # home: goals for/against/diff
@@ -59,9 +71,6 @@ BASE_FEATURES = [
     "elo_prob_h",                               # ELO implied P(home win) via logistic
     # Form (pre-computed in Matches.csv)
     "form5_h", "form5_a", "form5_diff",
-    # Odds features — normalized implied probabilities (NaN-safe)
-    "imp_h",  "imp_d",  "imp_a",               # P(H), P(D), P(A) after removing margin
-    "book_margin",                              # bookmaker overround (signals uncertainty)
     "league_enc",
 ]
 CORNER_FEATURES = BASE_FEATURES + ["h_r_corners", "a_r_corners"]
@@ -69,8 +78,9 @@ CORNER_FEATURES = BASE_FEATURES + ["h_r_corners", "a_r_corners"]
 # Only these must be non-null for a row to be used in training
 # (first game per team has NaN rolling stats from shift(1))
 CORE_FEATURES  = ["h_r_gf", "h_r_ga", "a_r_gf", "a_r_ga"]
-# For result/goals models, also require odds (sharpest signal)
-RESULT_REQUIRE = CORE_FEATURES + ["imp_h", "imp_d", "imp_a"]
+# No odds requirement — odds are never available at serve time, so rows
+# without historical odds are now usable for training too.
+RESULT_REQUIRE = CORE_FEATURES
 
 
 # ---------------------------------------------------------------------------
@@ -353,6 +363,66 @@ def compute_rolling_stats(df: pd.DataFrame, n: int = 5) -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# EPL-only (E0) dataset -- 2026-27 pre-season retrain
+# ---------------------------------------------------------------------------
+
+RECENCY_HALF_LIFE_YEARS = 8.0  # age-decay sample weight: a game this old counts half
+
+
+def build_epl_frame(data_dir: str = DATA_DIR) -> pd.DataFrame:
+    """
+    E0-only training frame. Elo and Form5 come exclusively from epl_data.py's
+    match-by-match computation -- Matches.csv's own HomeElo/AwayElo/Form3*/
+    Form5* columns are never read for this frame. One source per feature, no
+    mixing with the 37-league pipeline in load_matches()/compute_rolling_stats
+    above (that pipeline is untouched and still serves the deployed
+    multi-league model independently of this function).
+    """
+    epl = epl_data.build_epl_dataset(data_dir)
+
+    elo_diff = epl["elo_home_pre"] - epl["elo_away_pre"]
+    oh = _col(epl, "OddHome").where(lambda x: x > 0)
+    od = _col(epl, "OddDraw").where(lambda x: x > 0)
+    oa = _col(epl, "OddAway").where(lambda x: x > 0)
+    raw_h, raw_d, raw_a = 1.0 / oh, 1.0 / od, 1.0 / oa
+    raw_sum = raw_h + raw_d + raw_a
+
+    df = pd.DataFrame({
+        "home_team":    epl["HomeTeam"],
+        "away_team":    epl["AwayTeam"],
+        "home_goals":   pd.to_numeric(epl["FTHome"], errors="coerce"),
+        "away_goals":   pd.to_numeric(epl["FTAway"], errors="coerce"),
+        "result":       epl["FTResult"],
+        "home_sot":     _col(epl, "HomeTarget"),
+        "away_sot":     _col(epl, "AwayTarget"),
+        "home_corners": _col(epl, "HomeCorners"),
+        "away_corners": _col(epl, "AwayCorners"),
+        "date":         epl["MatchDate"],
+        "league":       "E0",
+        "elo_diff":     elo_diff,
+        "elo_prob_h":   _elo_win_prob(elo_diff),
+        "form5_h":      epl["form_n_home"],
+        "form5_a":      epl["form_n_away"],
+        "form5_diff":   epl["form_n_home"] - epl["form_n_away"],
+        "imp_h":        raw_h / raw_sum,
+        "imp_d":        raw_d / raw_sum,
+        "imp_a":        raw_a / raw_sum,
+        "book_margin":  raw_sum - 1.0,
+    })
+    df.dropna(subset=["home_goals", "away_goals", "date"], inplace=True)
+    df.sort_values("date", inplace=True, kind="mergesort")
+    df.reset_index(drop=True, inplace=True)
+    return df
+
+
+def add_recency_weight(df: pd.DataFrame, as_of, half_life_years: float = RECENCY_HALF_LIFE_YEARS) -> pd.Series:
+    """Exponential age-decay sample weight: weight = 0.5 ** (years_before_as_of / half_life)."""
+    as_of = pd.Timestamp(as_of)
+    years_ago = (as_of - df["date"]).dt.days / 365.25
+    return 0.5 ** (years_ago.clip(lower=0) / half_life_years)
+
+
+# ---------------------------------------------------------------------------
 # Model training with hyperparameter tuning
 # ---------------------------------------------------------------------------
 
@@ -404,6 +474,62 @@ def _tune_and_fit(X_tr: np.ndarray, y_tr: np.ndarray,
         random_state=42, verbosity=0, tree_method="hist",
     )
     clf.fit(X_tr, y_tr)
+
+    acc = accuracy_score(y_te, clf.predict(X_te))
+    print(f"  {label:<28}  test accuracy: {acc * 100:.1f}%  ({len(X_tr)+len(X_te):,} samples)")
+    return clf, acc
+
+
+def _tune_and_fit_weighted(X_tr: np.ndarray, y_tr: np.ndarray, w_tr: np.ndarray,
+                            X_te: np.ndarray, y_te: np.ndarray,
+                            label: str, multiclass: bool = False):
+    """
+    Identical to _tune_and_fit -- same param_dist, TUNE_ITER, cv, scoring,
+    random_state -- except sample_weight is passed through to both the
+    RandomizedSearchCV fit and the final refit. Used only for the recency-
+    weighting A/B comparison; the hyperparameter search itself is unchanged.
+    """
+    X_tr = np.where(np.isinf(X_tr), np.nan, X_tr)
+    X_te = np.where(np.isinf(X_te), np.nan, X_te)
+
+    param_dist = {
+        "n_estimators":     [300, 500, 700, 1000, 1500],
+        "max_depth":        [3, 4, 5, 6],
+        "learning_rate":    [0.01, 0.02, 0.05, 0.08, 0.10],
+        "subsample":        [0.60, 0.70, 0.80, 0.90],
+        "colsample_bytree": [0.50, 0.60, 0.70, 0.80],
+        "min_child_weight": [1, 3, 5, 10],
+        "gamma":            [0, 0.05, 0.10, 0.20, 0.30],
+        "reg_alpha":        [0, 0.01, 0.05, 0.10, 0.50],
+        "reg_lambda":       [0.5, 1.0, 1.5, 2.0, 3.0],
+    }
+
+    eval_metric = "mlogloss" if multiclass else "logloss"
+    base_clf = XGBClassifier(
+        eval_metric=eval_metric, random_state=42, verbosity=0, tree_method="hist",
+    )
+
+    sample_size = min(len(X_tr), 40_000)
+    rng = np.random.RandomState(42)
+    idx = rng.choice(len(X_tr), sample_size, replace=False)
+
+    print(f"  Tuning {label} [weighted]: {sample_size:,} samples ({TUNE_ITER} iters x 3-fold CV)")
+    search = RandomizedSearchCV(
+        base_clf, param_dist,
+        n_iter=TUNE_ITER, cv=3, scoring="accuracy",
+        random_state=42, n_jobs=-1, verbose=0,
+    )
+    search.fit(X_tr[idx], y_tr[idx], sample_weight=w_tr[idx])
+    best_p = search.best_params_
+    print(f"  CV best: {search.best_score_ * 100:.1f}%  "
+          f"(depth={best_p.get('max_depth')}, lr={best_p.get('learning_rate')}, "
+          f"n={best_p.get('n_estimators')})")
+
+    clf = XGBClassifier(
+        **best_p, eval_metric=eval_metric,
+        random_state=42, verbosity=0, tree_method="hist",
+    )
+    clf.fit(X_tr, y_tr, sample_weight=w_tr)
 
     acc = accuracy_score(y_te, clf.predict(X_te))
     print(f"  {label:<28}  test accuracy: {acc * 100:.1f}%  ({len(X_tr)+len(X_te):,} samples)")
@@ -470,12 +596,20 @@ def main():
     y_te_r = le_result.transform(te_r["result"])
     print(f"  Train: {len(X_tr_r):,}  Test: {len(X_te_r):,}")
 
-    # Naive odds baseline on test set
-    naive_pred = np.where(
-        (te_r["imp_h"] >= te_r["imp_d"]) & (te_r["imp_h"] >= te_r["imp_a"]), "H",
-        np.where(te_r["imp_d"] >= te_r["imp_a"], "D", "A")
-    )
-    naive_acc = (naive_pred == te_r["result"].values).mean()
+    # Naive odds baseline on test set — informational only (odds are no longer
+    # a model feature, but historical odds still exist on rows that have them,
+    # so this stays useful as a sanity floor). Restricted to the subset of the
+    # test set that actually has odds; RESULT_REQUIRE no longer guarantees it.
+    te_r_odds = te_r.dropna(subset=ODDS_FEATURES)
+    if len(te_r_odds):
+        naive_pred = np.where(
+            (te_r_odds["imp_h"] >= te_r_odds["imp_d"]) & (te_r_odds["imp_h"] >= te_r_odds["imp_a"]), "H",
+            np.where(te_r_odds["imp_d"] >= te_r_odds["imp_a"], "D", "A")
+        )
+        naive_acc = (naive_pred == te_r_odds["result"].values).mean()
+        print(f"  (naive baseline computed on {len(te_r_odds):,}/{len(te_r):,} test rows that have odds)")
+    else:
+        naive_acc = 0.0
     print(f"  Naive implied-prob baseline (test): {naive_acc * 100:.1f}%")
 
     # Backtest: old model on test set (informational only -- old models used random
@@ -698,6 +832,136 @@ def _build_form_cache(df: pd.DataFrame, n: int = 5, lookback_days: int = 365):
     out = os.path.join(DATA_DIR, "club_form_cache.csv")
     cache.to_csv(out, index=False)
     print(f"  Form cache: {len(cache)} teams -> {out}")
+
+
+# ---------------------------------------------------------------------------
+# EPL-only (E0) retrain -- 2026-27 pre-season audit, Phase 3
+#
+# Does NOT write result_model.pkl / goals_model.pkl / corners_model.pkl or
+# any other file. Returns trained models + all metrics for Phase 4 review;
+# saving to the deployed filenames only happens after explicit Phase 5
+# approval, elsewhere.
+# ---------------------------------------------------------------------------
+
+HOLDOUT_START = pd.Timestamp("2025-07-01")   # 2025-26 season boundary
+RECENCY_CUTOFF = pd.Timestamp("2010-07-01")  # "2010-11 onward" variant
+
+
+def train_epl_only():
+    from sklearn.metrics import log_loss, precision_recall_fscore_support
+
+    print("\n" + "=" * 62)
+    print("  EPL-ONLY (E0) RETRAIN -- 2026-27 pre-season")
+    print("=" * 62)
+
+    df = build_epl_frame(DATA_DIR)
+    assert (df["league"] == "E0").all(), "non-E0 rows leaked into the EPL-only frame"
+    print(f"\n[1] Training frame: E0 ONLY, {len(df):,} rows, "
+          f"{df['date'].min().date()} .. {df['date'].max().date()}")
+
+    print(f"\n[2] Rolling features (window={N_ROLLING}), single-league so "
+          f"league_enc is constant by design")
+    df = compute_rolling_stats(df, N_ROLLING)
+    le_league = LabelEncoder().fit(df["league"])
+    df["league_enc"] = le_league.transform(df["league"])
+    league_map = {"E0": 0}
+
+    df = df.sort_values("date").reset_index(drop=True)
+    holdout_mask = df["date"] >= HOLDOUT_START
+    print(f"\n[3] Chronological split: train < {HOLDOUT_START.date()}, "
+          f"holdout = 2025-26 season ({holdout_mask.sum()} raw rows before feature-dropna)")
+
+    print("\n[4] Hyperparameter search (UNCHANGED from train.py's existing "
+          "_tune_and_fit): XGBClassifier, RandomizedSearchCV, "
+          f"{TUNE_ITER} iterations, cv=3, scoring=accuracy, random_state=42.")
+    print("    Search space:", {
+        "n_estimators": [300, 500, 700, 1000, 1500], "max_depth": [3, 4, 5, 6],
+        "learning_rate": [0.01, 0.02, 0.05, 0.08, 0.10], "subsample": [0.60, 0.70, 0.80, 0.90],
+        "colsample_bytree": [0.50, 0.60, 0.70, 0.80], "min_child_weight": [1, 3, 5, 10],
+        "gamma": [0, 0.05, 0.10, 0.20, 0.30], "reg_alpha": [0, 0.01, 0.05, 0.10, 0.50],
+        "reg_lambda": [0.5, 1.0, 1.5, 2.0, 3.0],
+    })
+
+    targets = {
+        "result": dict(require=RESULT_REQUIRE, feat=BASE_FEATURES, multiclass=True),
+        "goals":  dict(require=RESULT_REQUIRE, feat=BASE_FEATURES, multiclass=False),
+        "corners": dict(require=CORE_FEATURES + ["h_r_corners", "a_r_corners"],
+                         feat=CORNER_FEATURES, multiclass=False),
+    }
+
+    df["over_2_5"] = ((df["home_goals"] + df["away_goals"]) > 2.5).astype(int)
+    df["over_9_5"] = ((df["home_corners"] + df["away_corners"]) > 9.5).astype(int)
+    y_col = {"result": "result", "goals": "over_2_5", "corners": "over_9_5"}
+
+    le_result = LabelEncoder().fit(["A", "D", "H"])  # fixed order, independent of split
+
+    results = {}
+    for name, cfg in targets.items():
+        print(f"\n{'=' * 62}\n  MODEL: {name}\n{'=' * 62}")
+        d = df.dropna(subset=cfg["require"] + [y_col[name]]).copy()
+        tr_full = d[d["date"] < HOLDOUT_START]
+        te      = d[d["date"] >= HOLDOUT_START]
+        tr_recent = tr_full[tr_full["date"] >= RECENCY_CUTOFF]
+
+        X_te = te[cfg["feat"]].values.astype(float)
+        if name == "result":
+            y_tr_full = le_result.transform(tr_full["result"])
+            y_tr_recent = le_result.transform(tr_recent["result"])
+            y_te = le_result.transform(te["result"])
+        else:
+            y_tr_full = tr_full[y_col[name]].values
+            y_tr_recent = tr_recent[y_col[name]].values
+            y_te = te[y_col[name]].values
+
+        X_tr_full = tr_full[cfg["feat"]].values.astype(float)
+        X_tr_recent = tr_recent[cfg["feat"]].values.astype(float)
+        w_tr_full = add_recency_weight(tr_full, HOLDOUT_START).values
+
+        print(f"  Full-history (weighted): train={len(X_tr_full):,}  "
+              f"2010-11+ only: train={len(X_tr_recent):,}  holdout={len(X_te):,}")
+
+        print("\n  -- Variant A: full history, age-decay sample weights "
+              f"(half-life={RECENCY_HALF_LIFE_YEARS}y) --")
+        model_a, _ = _tune_and_fit_weighted(
+            X_tr_full, y_tr_full, w_tr_full, X_te, y_te,
+            f"{name} [A:full+decay]", multiclass=cfg["multiclass"])
+        proba_a = model_a.predict_proba(X_te)
+        ll_a = log_loss(y_te, proba_a, labels=list(range(proba_a.shape[1])))
+
+        print("\n  -- Variant B: 2010-11 onward only, unweighted --")
+        model_b, _ = _tune_and_fit(
+            X_tr_recent, y_tr_recent, X_te, y_te,
+            f"{name} [B:2010+]", multiclass=cfg["multiclass"])
+        proba_b = model_b.predict_proba(X_te)
+        ll_b = log_loss(y_te, proba_b, labels=list(range(proba_b.shape[1])))
+
+        print(f"\n  Holdout log loss:  A(full+decay)={ll_a:.4f}   B(2010+)={ll_b:.4f}")
+        if ll_a <= ll_b:
+            winner, model, proba = "A:full+decay", model_a, proba_a
+        else:
+            winner, model, proba = "B:2010+", model_b, proba_b
+        print(f"  WINNER: {winner}")
+
+        pred = np.argmax(proba, axis=1) if cfg["multiclass"] else model.predict(X_te)
+        acc = accuracy_score(y_te, pred)
+        print(f"  Final ({winner}) holdout accuracy: {acc * 100:.2f}%")
+
+        if name == "result":
+            prec, rec, f1, support = precision_recall_fscore_support(
+                y_te, pred, labels=[0, 1, 2], zero_division=0)
+            print("\n  Per-class precision/recall (1X2), classes A/D/H:")
+            for cls, p, r, f, s in zip(["A", "D", "H"], prec, rec, f1, support):
+                print(f"    {cls}:  precision={p:.3f}  recall={r:.3f}  f1={f:.3f}  n={s}")
+
+        results[name] = {
+            "model": model, "winner": winner, "features": cfg["feat"],
+            "X_te": X_te, "y_te": y_te, "proba": proba, "pred": pred, "acc": acc,
+            "te_df": te, "ll_a": ll_a, "ll_b": ll_b,
+            "result_encoder": le_result if name == "result" else None,
+            "league_encoder": le_league, "league_map": league_map,
+        }
+
+    return results, df
 
 
 if __name__ == "__main__":

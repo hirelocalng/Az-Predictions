@@ -101,24 +101,21 @@ def _elo_win_prob(elo_diff: float) -> float:
     return 1.0 / (1.0 + 10.0 ** (-elo_diff / 400.0))
 
 
-def _implied_probs(odd_h: float, odd_d: float, odd_a: float):
-    """Convert decimal odds to normalised implied probabilities."""
-    if any(math.isnan(x) or x <= 0 for x in [odd_h, odd_d, odd_a]):
-        return math.nan, math.nan, math.nan, math.nan
-    raw_sum = 1/odd_h + 1/odd_d + 1/odd_a
-    return 1/odd_h/raw_sum, 1/odd_d/raw_sum, 1/odd_a/raw_sum, raw_sum - 1.0
-
-
 def build_features(home: dict, away: dict,
                    elo_diff: float,
                    form5_h: float, form5_a: float,
-                   odd_h: float, odd_d: float, odd_a: float,
                    league_enc: int) -> tuple:
     """
     Build (base_feat, corner_feat) matching BASE_FEATURES / CORNER_FEATURES
     defined in train.py.
 
-    BASE_FEATURES order (26 features):
+    No odds features — there is no live pre-match odds feed for upcoming
+    fixtures (only historical closing odds in Matches.csv), so imp_h/imp_d/
+    imp_a/book_margin were dropped from training (2026-08-21 fix: faking
+    them with a constant odds triple was flattening every live prediction
+    toward a near-uniform split). See train.py BASE_FEATURES.
+
+    BASE_FEATURES order (22 features):
       h_r_gf, h_r_ga, h_r_gd,
       h_r_sot,
       h_r_win, h_r_draw, h_r_pts, h_r_home_win,
@@ -127,7 +124,6 @@ def build_features(home: dict, away: dict,
       a_r_win, a_r_draw, a_r_pts, a_r_away_win,
       elo_diff, elo_prob_h,
       form5_h, form5_a, form5_diff,
-      imp_h, imp_d, imp_a, book_margin,
       league_enc
 
     CORNER_FEATURES = BASE_FEATURES + [h_r_corners, a_r_corners]
@@ -135,7 +131,6 @@ def build_features(home: dict, away: dict,
     h_pts = 3.0 * home["win"] + 1.0 * home["draw"]
     a_pts = 3.0 * away["win"] + 1.0 * away["draw"]
 
-    imp_h, imp_d, imp_a, book_margin = _implied_probs(odd_h, odd_d, odd_a)
     elo_prob_h = _elo_win_prob(elo_diff)
 
     base = [
@@ -160,10 +155,6 @@ def build_features(home: dict, away: dict,
         form5_h,                     # form5_h
         form5_a,                     # form5_a
         form5_h - form5_a,           # form5_diff
-        imp_h,                       # imp_h
-        imp_d,                       # imp_d
-        imp_a,                       # imp_a
-        book_margin,                 # book_margin
         float(league_enc),           # league_enc
     ]
 
@@ -270,31 +261,9 @@ def main():
     form5_h  = ask_float("Home team Form5 points (0–15) ", round(home_stats["win"] * 15), 0, 15)
     form5_a  = ask_float("Away team Form5 points (0–15) ", round(away_stats["win"] * 15), 0, 15)
 
-    print("\n  Betting odds — decimal format (press Enter to skip; model still works without)")
-    def _parse_odd(prompt: str) -> float:
-        raw = input(f"    {prompt} [Enter to skip]: ").strip()
-        if not raw:
-            return math.nan
-        try:
-            v = float(raw)
-            if v <= 0:
-                print("    Invalid odds — skipping")
-                return math.nan
-            return v
-        except ValueError:
-            print("    Not a number — skipping")
-            return math.nan
-    odd_h = _parse_odd("Home win odds (e.g. 2.10)")
-    odd_d = _parse_odd("Draw odds     (e.g. 3.30)")
-    odd_a = _parse_odd("Away win odds (e.g. 4.00)")
-    if not (math.isnan(odd_h) or math.isnan(odd_d) or math.isnan(odd_a)):
-        ih, id_, ia, _ = _implied_probs(odd_h, odd_d, odd_a)
-        print(f"    Implied: Home {ih*100:.1f}%  Draw {id_*100:.1f}%  Away {ia*100:.1f}%")
-
     base_feat, corner_feat = build_features(
         home_stats, away_stats,
         elo_diff, form5_h, form5_a,
-        odd_h, odd_d, odd_a,
         league_enc,
     )
 

@@ -444,6 +444,42 @@ def _best_bet(home_name, away_name, ph, pd_, pa, pg, pc=None):
 
 # ── Shared feature builder for club matches ───────────────────────────────────
 
+def _team_stats(team_name: str, df_hist: pd.DataFrame) -> dict:
+    """
+    Resolve one team's rolling stats, in priority order:
+      1. Match-by-match history in df_hist (Matches.csv / BRA-ARG supplements),
+         via _rolling() -- which itself falls back to _CLUB_FORM_CACHE for a
+         team with no *recent* rows there, or to the promoted-team prior for
+         stale history.
+      2. _CLUB_FORM_CACHE directly, when df_hist has no rows for this league
+         at all -- e.g. data/Matches.csv isn't deployed to Railway (it's
+         gitignored; only club_form_cache.csv and team_elo_cache.csv are
+         committed). This is exactly the case _CLUB_FORM_CACHE was loaded
+         for ("used as fallback when data/Matches.csv is not present on
+         Railway"), but it was unreachable: _score_club_match used to
+         default straight to _DEFAULT_STATS for every team whenever
+         df_hist was empty, without ever calling _rolling() (and therefore
+         never consulting the cache) at all. Confirmed root cause of BTTS
+         being a hard constant (0.4883, formula fed 1.2/1.2 every time) and
+         Goals/Corners being compressed into a narrow band on production
+         (2026-08-22 audit).
+      3. _DEFAULT_STATS, only when the team is genuinely unresolvable
+         everywhere.
+    """
+    if not team_name:
+        return dict(_DEFAULT_STATS)
+    if not df_hist.empty:
+        teams = sorted(set(df_hist["home"].tolist() + df_hist["away"].tolist()))
+        resolved = _resolve(team_name, teams)
+        if resolved:
+            return _rolling(df_hist, resolved)
+    if _CLUB_FORM_CACHE:
+        resolved = _resolve(team_name, list(_CLUB_FORM_CACHE.keys()))
+        if resolved:
+            return dict(_CLUB_FORM_CACHE[resolved])
+    return dict(_DEFAULT_STATS)
+
+
 def _score_club_match(match, club_predict_fn):
     """
     Given a football-data.org match dict and a predict function, return a
@@ -466,15 +502,8 @@ def _score_club_match(match, club_predict_fn):
     if df_hist.empty:
         df_hist = _load_history("E0")
 
-    if not df_hist.empty:
-        teams = sorted(set(df_hist["home"].tolist() + df_hist["away"].tolist()))
-        h_res = _resolve(home_name, teams)
-        a_res = _resolve(away_name, teams)
-        hs  = _rolling(df_hist, h_res) if h_res else dict(_DEFAULT_STATS)
-        as_ = _rolling(df_hist, a_res) if a_res else dict(_DEFAULT_STATS)
-    else:
-        hs  = dict(_DEFAULT_STATS)
-        as_ = dict(_DEFAULT_STATS)
+    hs  = _team_stats(home_name, df_hist)
+    as_ = _team_stats(away_name, df_hist)
 
     form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
     form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
@@ -488,13 +517,11 @@ def _score_club_match(match, club_predict_fn):
     # incident). Models are trained odds-free now (train.py BASE_FEATURES);
     # no odds are fetched, computed, or displayed anywhere in this path.
     try:
-        ph, pd_, pa, pg, pc = club_predict_fn(
+        ph, pd_, pa, pg, pc, btts = club_predict_fn(
             hs, as_, elo_diff, form5_h, form5_a, league_code
         )
     except Exception:
         return None
-
-    btts = _btts_prob(hs.get("gf", 1.2), as_.get("gf", 1.2))
 
     best_prob = max(ph, pd_, pa)
     if best_prob == ph:
@@ -518,7 +545,7 @@ def _score_club_match(match, club_predict_fn):
         "status":       status,
         "result":       {"home": round(ph, 4), "draw": round(pd_, 4), "away": round(pa, 4)},
         "over_goals":   round(pg, 4),
-        "btts":         btts,
+        "btts":         round(btts, 4),
         "over_corners": round(pc, 4),
         "best_bet":     bet,
         "_conf":        max(ph, pd_, pa, max(pg, 1 - pg)),

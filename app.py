@@ -47,6 +47,7 @@ _BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 club_result  = _load(os.path.join(_BASE_DIR, 'result_model.pkl'))
 club_goals   = _load(os.path.join(_BASE_DIR, 'goals_model.pkl'))
 club_corners = _load(os.path.join(_BASE_DIR, 'corners_model.pkl'))
+club_btts    = _load(os.path.join(_BASE_DIR, 'btts_model.pkl'))
 
 LEAGUE_MAP  = club_result['league_map']  if club_result  else {}
 RES_ENCODER = club_result['result_encoder'] if club_result else None
@@ -1666,6 +1667,7 @@ def _club_predict(h, a, elo_diff, form5_h, form5_a, league_code):
     rp  = club_result['model'].predict_proba(X)[0]   if club_result  else [0.3, 0.25, 0.45]
     gp  = club_goals['model'].predict_proba(X)[0]    if club_goals   else [0.45, 0.55]
     cp  = club_corners['model'].predict_proba(Xc)[0] if club_corners else [0.50, 0.50]
+    bp  = club_btts['model'].predict_proba(X)[0]     if club_btts    else [0.52, 0.48]
 
     # result encoder order: A→0, D→1, H→2
     p_home  = float(rp[2])
@@ -1673,7 +1675,8 @@ def _club_predict(h, a, elo_diff, form5_h, form5_a, league_code):
     p_away  = float(rp[0])
     p_over_goals   = float(gp[1])
     p_over_corners = float(cp[1])
-    return p_home, p_draw, p_away, p_over_goals, p_over_corners
+    p_btts         = float(bp[1])
+    return p_home, p_draw, p_away, p_over_goals, p_over_corners, p_btts
 
 
 # ── International prediction ──────────────────────────────────────────────────

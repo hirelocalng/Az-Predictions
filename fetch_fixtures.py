@@ -7,7 +7,9 @@ Endpoints used:
 """
 
 import difflib
+import json
 import math
+import os
 import unicodedata
 import warnings
 from datetime import datetime, timezone
@@ -420,27 +422,60 @@ def _btts_prob(home_gs: float, away_gs: float) -> float:
 
 
 # ── Best bet selector ─────────────────────────────────────────────────────────
+#
+# Per-market confidence baselines (mean, std of max-class probability),
+# computed once across ~49k chronological-test-split predictions by
+# compute_bestbet_baselines.py -- shared with app.py's _compute_best_bet.
+# Raw probability isn't comparable across markets (Result is 3-way, floor
+# 1/3, vs 1/2 for the binary markets), and Corners in particular runs a
+# narrower, consistently-elevated confidence band regardless of the actual
+# fixture, so picking whichever raw number is biggest systematically
+# favoured Corners. Selecting by z-score against each market's own
+# distribution instead puts them on a comparable footing.
+_BESTBET_DEFAULT_BASELINES = {
+    "result":  (0.4739, 0.0905),
+    "goals":   (0.5453, 0.0382),
+    "btts":    (0.5313, 0.0260),
+    "corners": (0.5503, 0.0322),
+}
+try:
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "bestbet_baselines.json")) as _bb_f:
+        _BESTBET_BASELINES = {k: tuple(v) for k, v in json.load(_bb_f).items()}
+except Exception:
+    _BESTBET_BASELINES = _BESTBET_DEFAULT_BASELINES
+
+
+def _bestbet_zscore(confidence: float, market: str) -> float:
+    mean, std = _BESTBET_BASELINES.get(market, _BESTBET_DEFAULT_BASELINES[market])
+    if std <= 0:
+        return 0.0
+    return (confidence - mean) / std
+
 
 def _best_bet(home_name, away_name, ph, pd_, pa, pg, pc=None):
-    options = []
+    options = []  # (zscore, confidence, label)
 
     result_conf = max(ph, pd_, pa)
     if result_conf == ph:
-        options.append((f"{home_name} to Win", result_conf))
+        result_label = f"{home_name} to Win"
     elif result_conf == pa:
-        options.append((f"{away_name} to Win", result_conf))
+        result_label = f"{away_name} to Win"
     else:
-        options.append(("Draw", result_conf))
+        result_label = "Draw"
+    options.append((_bestbet_zscore(result_conf, "result"), result_conf, result_label))
 
     goals_conf = max(pg, 1.0 - pg)
-    options.append(("Over 2.5 Goals" if pg >= 0.5 else "Under 2.5 Goals", goals_conf))
+    options.append((_bestbet_zscore(goals_conf, "goals"), goals_conf,
+                     "Over 2.5 Goals" if pg >= 0.5 else "Under 2.5 Goals"))
 
     if pc is not None:
         corners_conf = max(pc, 1.0 - pc)
-        options.append(("Corners Over 9.5" if pc >= 0.5 else "Corners Under 9.5", corners_conf))
+        options.append((_bestbet_zscore(corners_conf, "corners"), corners_conf,
+                         "Corners Over 9.5" if pc >= 0.5 else "Corners Under 9.5"))
 
-    label, best_conf = max(options, key=lambda x: x[1])
-    return label, round(best_conf, 4), round(max(x[1] for x in options), 4)
+    best_z, best_conf, label = max(options, key=lambda x: x[0])
+    return label, round(best_conf, 4), round(best_conf, 4)
 
 # ── Shared feature builder for club matches ───────────────────────────────────
 

@@ -49,6 +49,42 @@ club_goals   = _load(os.path.join(_BASE_DIR, 'goals_model.pkl'))
 club_corners = _load(os.path.join(_BASE_DIR, 'corners_model.pkl'))
 club_btts    = _load(os.path.join(_BASE_DIR, 'btts_model.pkl'))
 
+# Per-market confidence baselines (mean, std of max-class probability),
+# computed once across ~49k chronological-test-split predictions by
+# compute_bestbet_baselines.py. Used to normalise Best Bet market
+# selection -- see _bestbet_zscore below.
+_BESTBET_DEFAULT_BASELINES = {
+    'result':  (0.4739, 0.0905),
+    'goals':   (0.5453, 0.0382),
+    'btts':    (0.5313, 0.0260),
+    'corners': (0.5503, 0.0322),
+}
+try:
+    with open(os.path.join(_BASE_DIR, 'bestbet_baselines.json')) as _bb_f:
+        _BESTBET_BASELINES = {k: tuple(v) for k, v in json.load(_bb_f).items()}
+except Exception:
+    _BESTBET_BASELINES = _BESTBET_DEFAULT_BASELINES
+
+
+def _bestbet_zscore(confidence: float, market: str) -> float:
+    """
+    How unusual is this stated confidence relative to what `market`
+    typically produces? Raw probability isn't comparable across markets --
+    Result is 3-way (floor 1/3) vs 2-way (floor 1/2) for the others, and
+    empirically Corners rarely dips far below ~52% while Result/Goals
+    routinely sit near a genuine coin-flip on close matchups, so comparing
+    raw magnitude let Corners win Best Bet 44% of the time on live traffic
+    vs Result 32%, Goals 24%, BTTS 0% -- independent of which market
+    actually carried the most genuine edge on a given fixture (2026-08-22
+    audit). A z-score against each market's own empirical distribution
+    puts them on a comparable footing.
+    """
+    mean, std = _BESTBET_BASELINES.get(market, _BESTBET_DEFAULT_BASELINES[market])
+    if std <= 0:
+        return 0.0
+    return (confidence - mean) / std
+
+
 LEAGUE_MAP  = club_result['league_map']  if club_result  else {}
 RES_ENCODER = club_result['result_encoder'] if club_result else None
 
@@ -424,7 +460,17 @@ def _save_prediction(tip):
 
 
 def _compute_best_bet(tip):
-    """Return best_bet dict whose label+confidence is the highest-probability market."""
+    """
+    Return best_bet dict for whichever market shows the most genuine edge.
+
+    Selection is by z-score against each market's own empirical confidence
+    baseline (_bestbet_zscore), not raw probability -- Result (3-way) and
+    the binary markets aren't on the same scale, and Corners in particular
+    runs a narrower, consistently-elevated confidence band than Result or
+    Goals regardless of the actual fixture, which let it dominate Best Bet
+    under a raw-magnitude comparison. The displayed `confidence` is still
+    the plain stated probability -- only the selection is normalised.
+    """
     result = tip.get('result') or {}
     ph  = float(result.get('home', 0) or 0)
     pd_ = float(result.get('draw', 0) or 0)
@@ -435,21 +481,31 @@ def _compute_best_bet(tip):
     home = tip.get('home_team') or tip.get('home') or ''
     away = tip.get('away_team') or tip.get('away') or ''
 
-    candidates = []
-    if ph:  candidates.append((ph,  f"{home} to Win"))
-    if pd_: candidates.append((pd_, 'Draw'))
-    if pa:  candidates.append((pa,  f"{away} to Win"))
+    candidates = []  # (zscore, confidence, label)
+    if ph or pd_ or pa:
+        res_conf = max(ph, pd_, pa)
+        if res_conf == ph:
+            res_label = f"{home} to Win"
+        elif res_conf == pa:
+            res_label = f"{away} to Win"
+        else:
+            res_label = 'Draw'
+        candidates.append((_bestbet_zscore(res_conf, 'result'), res_conf, res_label))
+
     goals_pct = pg if pg >= 0.5 else (1.0 - pg)
-    candidates.append((goals_pct, 'Over 2.5 Goals' if pg >= 0.5 else 'Under 2.5 Goals'))
+    candidates.append((_bestbet_zscore(goals_pct, 'goals'), goals_pct,
+                       'Over 2.5 Goals' if pg >= 0.5 else 'Under 2.5 Goals'))
     btts_pct = bt if bt >= 0.5 else (1.0 - bt)
-    candidates.append((btts_pct, 'BTTS Yes' if bt >= 0.5 else 'BTTS No'))
+    candidates.append((_bestbet_zscore(btts_pct, 'btts'), btts_pct,
+                       'BTTS Yes' if bt >= 0.5 else 'BTTS No'))
     cor_pct = co if co >= 0.5 else (1.0 - co)
-    candidates.append((cor_pct, 'Over 9.5 Corners' if co >= 0.5 else 'Under 9.5 Corners'))
+    candidates.append((_bestbet_zscore(cor_pct, 'corners'), cor_pct,
+                       'Over 9.5 Corners' if co >= 0.5 else 'Under 9.5 Corners'))
 
     if not candidates:
         return tip.get('best_bet') or {}
-    best_prob, best_label = max(candidates, key=lambda x: x[0])
-    return {'label': best_label, 'confidence': round(best_prob, 4)}
+    best_z, best_conf, best_label = max(candidates, key=lambda x: x[0])
+    return {'label': best_label, 'confidence': round(best_conf, 4)}
 
 
 def _save_basketball_prediction(game, pred, sport):

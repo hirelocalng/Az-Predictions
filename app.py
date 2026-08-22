@@ -193,6 +193,7 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_home_score INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_away_score INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_minute VARCHAR(10)",
+                "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS live_updated_at TIMESTAMPTZ",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS actual_corners INTEGER",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS sport VARCHAR(20) DEFAULT 'football'",
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS prediction_payload JSONB",
@@ -2267,6 +2268,22 @@ _ESPN_LIVE_LEAGUES = [
     'concacaf.nations.league',
     'conmebol.america',      # Copa América
     'uefa.euro',             # UEFA European Championship
+    # Domestic club leagues — matches _COMP_TO_LEAGUE in fetch_fixtures.py.
+    # Added 2026-08-22: club prediction cards already carried a LIVE badge
+    # (driven by football-data.org's own per-match `status`), but no score
+    # ever appeared because this list only covered international football —
+    # the shared live-score pipeline (_update_live_scores, /api/live-scores,
+    # ResultsSection, _resolve_result) never actually ran for club matches.
+    'eng.1',            # Premier League
+    'eng.2',            # EFL Championship
+    'esp.1',            # La Liga
+    'ger.1',            # Bundesliga
+    'ita.1',            # Serie A
+    'fra.1',            # Ligue 1
+    'por.1',            # Primeira Liga
+    'ned.1',            # Eredivisie
+    'bra.1',            # Brasileirão
+    'uefa.champions', 'uefa.europa', 'uefa.europa.conf',
 ]
 
 
@@ -2318,7 +2335,8 @@ def _espn_match(espn, home_pred, away_pred):
 
 
 _ESPN_ACTIVE = frozenset({
-    'STATUS_IN_PROGRESS', 'STATUS_HALFTIME', 'STATUS_SECOND_HALF',
+    'STATUS_IN_PROGRESS', 'STATUS_FIRST_HALF', 'STATUS_HALFTIME', 'STATUS_SECOND_HALF',
+    'STATUS_EXTRA_TIME', 'STATUS_PENALTIES',
     'STATUS_FINAL', 'STATUS_FULL_TIME', 'STATUS_FULL_ET', 'STATUS_FULL_PEN',
 })
 _ESPN_DONE = frozenset({
@@ -2472,7 +2490,8 @@ def _update_live_scores():
                                 SET actual_home_score=%s, actual_away_score=%s,
                                     actual_corners=%s,
                                     result_status=%s, match_status='FINISHED',
-                                    live_home_score=%s, live_away_score=%s
+                                    live_home_score=%s, live_away_score=%s,
+                                    live_updated_at=NOW()
                                 WHERE match_id=%s
                             """, (hs, as_, corners, status, hs, as_, mid))
                             _log.info('FINISHED %s %d-%d %s → %s (corners=%s)',
@@ -2482,7 +2501,8 @@ def _update_live_scores():
                                 UPDATE predictions
                                 SET result_status='LIVE', match_status='LIVE',
                                     live_home_score=%s, live_away_score=%s,
-                                    live_minute=%s
+                                    live_minute=%s,
+                                    live_updated_at=NOW()
                                 WHERE match_id=%s
                             """, (hs, as_, minute, mid))
                             _log.info('LIVE %s %d-%d %s (%s)', home, hs, as_, away, minute)
@@ -4702,14 +4722,25 @@ def results_history():
 
 @app.route('/api/live-scores')
 def live_scores():
-    """Return all currently LIVE predictions keyed by match_id."""
+    """
+    Return currently LIVE predictions keyed by match_id.
+
+    Excludes rows whose live_updated_at is more than 10 minutes old (5x the
+    2-min poll cadence) -- if the ESPN poll has stopped confirming a match
+    is still live (outage, team-name mismatch, etc.), stop serving its last
+    known score rather than freezing it in place. The frontend already
+    falls back to its normal (non-live) card appearance when a match_id is
+    absent from this response.
+    """
     try:
         with _db() as (conn, cur):
             if conn is not None:
                 cur.execute("""
                     SELECT match_id, home_team, away_team,
                            live_home_score, live_away_score, live_minute
-                    FROM predictions WHERE result_status = 'LIVE'
+                    FROM predictions
+                    WHERE result_status = 'LIVE'
+                      AND live_updated_at > NOW() - INTERVAL '10 minutes'
                 """)
                 cols = [d[0] for d in cur.description]
                 live = {

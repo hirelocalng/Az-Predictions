@@ -625,6 +625,54 @@ def get_club_tips(club_predict_fn) -> list:
 
 _SINGLE_COMP_WINDOW_DAYS = 10   # look this many days ahead for upcoming fixtures
 
+# Shared per-competition raw-match cache. Root cause of the 2026-08-23
+# "featured card correct, fixture list says no fixtures" bug: the card
+# (_get_comp_next_match) and the list (_get_comp_tips) used to make two
+# INDEPENDENT football-data.org calls -- a 120-day window cached for 1
+# hour for the card, and a separate 10-day window cached for only 10
+# minutes for the list. Same underlying data, same rate-limited API, but
+# the list refetched 6x more often, so it was disproportionately likely
+# to catch a 429 (we triggered plenty of these ourselves today under
+# heavy call volume) -- and _get_comp_tips silently swallowed that into
+# an empty list, indistinguishable from "genuinely no fixtures," cached
+# for the next 10 minutes. The card's much rarer refresh usually had a
+# stable cached success, so it kept showing correct data while the list
+# right below it intermittently went empty -- identically on both
+# leagues, since they share the same API quota.
+#
+# Fix: one shared wide-window fetch per competition, used by both the
+# card and the list, with a failure falling back to the last known-good
+# data instead of an empty list.
+_COMP_WINDOW_CACHE: dict = {}
+_COMP_WINDOW_TTL = 3600  # 1 hour -- matches the card's previously-separate, proven-reliable cadence
+_COMP_WINDOW_DAYS = 120  # wide enough to serve the 10-day list AND the off-season "next match" lookup
+
+
+def _match_kickoff(m: dict) -> datetime:
+    try:
+        return datetime.fromisoformat(m.get("utcDate", "").replace("Z", "+00:00"))
+    except Exception:
+        return datetime(9999, 1, 1, tzinfo=timezone.utc)
+
+
+def _fetch_comp_window_cached(comp_code: str) -> list:
+    """Single shared source of truth for one competition's upcoming
+    matches -- see module comment above for why this replaced two
+    independently-scheduled fetches."""
+    import time as _time
+    now = _time.time()
+    cached = _COMP_WINDOW_CACHE.get(comp_code)
+    if cached and (now - cached["ts"]) < _COMP_WINDOW_TTL:
+        return cached["data"]
+    try:
+        matches = _fetch_comp_window(comp_code, _COMP_WINDOW_DAYS)
+    except Exception:
+        if cached:
+            return cached["data"]
+        matches = []
+    _COMP_WINDOW_CACHE[comp_code] = {"data": matches, "ts": now}
+    return matches
+
 
 def _fetch_comp_window(comp_code: str, days: int) -> list:
     """
@@ -650,16 +698,21 @@ def _fetch_comp_window(comp_code: str, days: int) -> list:
 
 def _get_comp_tips(comp_code: str, id_prefix: str, club_predict_fn) -> list:
     """
-    Fetch upcoming fixtures (next _SINGLE_COMP_WINDOW_DAYS days) for one
-    football-data.org competition and score each through the general club
-    model (league code resolved via _COMP_TO_LEAGUE from the match itself).
-    No confidence floor; caller decides what to do with an empty list
-    (e.g. off-season).
+    Score upcoming fixtures (next _SINGLE_COMP_WINDOW_DAYS days) for one
+    football-data.org competition through the general club model (league
+    code resolved via _COMP_TO_LEAGUE from the match itself). No
+    confidence floor; caller decides what to do with an empty list (e.g.
+    off-season).
+
+    Filters _fetch_comp_window_cached's wide window down to the next
+    _SINGLE_COMP_WINDOW_DAYS days client-side, rather than making its own
+    independent short-window API call -- see _COMP_WINDOW_CACHE's comment
+    for why (2026-08-23: this used to diverge from _get_comp_next_match
+    under football-data.org rate limiting).
     """
-    try:
-        matches = _fetch_comp_window(comp_code, _SINGLE_COMP_WINDOW_DAYS)
-    except Exception:
-        matches = []
+    all_matches = _fetch_comp_window_cached(comp_code)
+    cutoff = datetime.now(timezone.utc) + pd.Timedelta(days=_SINGLE_COMP_WINDOW_DAYS)
+    matches = [m for m in all_matches if _match_kickoff(m) <= cutoff]
 
     tips = []
     for idx, match in enumerate(matches):
@@ -675,25 +728,18 @@ def _get_comp_tips(comp_code: str, id_prefix: str, club_predict_fn) -> list:
 
 def _get_comp_next_match(comp_code: str):
     """
-    Return the next scheduled fixture for one competition (widest lookahead,
-    up to ~120 days so it works during the summer off-season) as a dict with
-    keys home, away, home_crest, away_crest, utc_kickoff, venue — or None if
-    the API is unreachable/returns nothing.
+    Return the next scheduled fixture for one competition as a dict with
+    keys home, away, home_crest, away_crest, utc_kickoff, venue — or None
+    if the API is unreachable and no cached data exists yet.
+
+    Uses the same _fetch_comp_window_cached source as _get_comp_tips (see
+    its comment) rather than its own independent fetch.
     """
-    try:
-        matches = _fetch_comp_window(comp_code, 120)
-    except Exception:
-        return None
+    matches = _fetch_comp_window_cached(comp_code)
     if not matches:
         return None
 
-    def _kickoff(m):
-        try:
-            return datetime.fromisoformat(m.get("utcDate", "").replace("Z", "+00:00"))
-        except Exception:
-            return datetime(9999, 1, 1, tzinfo=timezone.utc)
-
-    matches.sort(key=_kickoff)
+    matches = sorted(matches, key=_match_kickoff)
     m = matches[0]
     home, away = _extract_teams(m)
     if not home or not away:

@@ -326,7 +326,29 @@ def _build_wnba_fv(hf, af, h2h):
     ]
 
 
-def _run_prediction(fv, res_data, ou_data, home_name, away_name, ou_line):
+# Per-market confidence baselines (mean, std of max-class probability,
+# 0-100 scale), computed by permuting the actual trained result/O-U
+# models over every current team pairing (compute_bball_baseline.py /
+# compute_nba_baseline.py, 2026-08-24). Raw-magnitude comparison between
+# Result (win_pct) and Total Points (ou_pct) systematically favoured O/U
+# -- its mean confidence runs several points higher than Result's for
+# both sports (WNBA: ou 77.2 vs result 69.0; NBA: ou 65.2 vs result
+# 60.9) -- so O/U won "Best Bet" on effectively every live game
+# regardless of which market actually carried more genuine edge on that
+# particular matchup. Mirrors the same fix already applied to football's
+# _compute_best_bet.
+_BESTBET_BBALL_BASELINES = {
+    'nba':  {'result': (60.94, 8.81),  'ou': (65.20, 8.64)},
+    'wnba': {'result': (68.97, 11.08), 'ou': (77.15, 12.14)},
+}
+
+
+def _bball_zscore(pct, sport, market):
+    mean, std = _BESTBET_BBALL_BASELINES.get(sport, _BESTBET_BBALL_BASELINES['nba'])[market]
+    return (pct - mean) / std if std > 0 else 0.0
+
+
+def _run_prediction(fv, res_data, ou_data, home_name, away_name, ou_line, sport='nba'):
     res_proba = res_data['model'].predict_proba([fv])[0]
     ou_proba  = ou_data['model'].predict_proba([fv])[0]
 
@@ -340,13 +362,14 @@ def _run_prediction(fv, res_data, ou_data, home_name, away_name, ou_line):
     else:
         winner, win_pct = away_name, away_win_pct
 
+    ou_pct = max(over_pct, under_pct)
     best_bets = [
-        (win_pct,  winner,             'result'),
-        (max(over_pct, under_pct),
+        (_bball_zscore(win_pct, sport, 'result'), win_pct, winner, 'result'),
+        (_bball_zscore(ou_pct,  sport, 'ou'),     ou_pct,
          f"Over {ou_line}" if over_pct > 50 else f"Under {ou_line}", 'ou'),
     ]
     best_bets.sort(key=lambda x: x[0], reverse=True)
-    best_bet_label, best_bet_type = best_bets[0][1], best_bets[0][2]
+    best_bet_label, best_bet_type = best_bets[0][2], best_bets[0][3]
 
     return {
         'home_win_pct':   round(home_win_pct, 1),
@@ -383,7 +406,7 @@ def predict_nba(home_name, away_name, ou_line=None):
         h2h = _nba_h2h(home_name, away_name)
         fv  = _build_nba_fv(hf, af, h2h)
         effective_line = ou_line if ou_line is not None else NBA_OU_LINE
-        return _run_prediction(fv, _NBA_RES, _NBA_OU, home_name, away_name, effective_line)
+        return _run_prediction(fv, _NBA_RES, _NBA_OU, home_name, away_name, effective_line, sport='nba')
     except Exception as e:
         traceback.print_exc()
         return {'error': str(e)}
@@ -402,7 +425,7 @@ def predict_wnba(home_name, away_name, ou_line=None):
         h2h = 0.5  # not enough current data for WNBA H2H
         fv  = _build_wnba_fv(hf, af, h2h)
         effective_line = ou_line if ou_line is not None else WNBA_OU_LINE
-        return _run_prediction(fv, _WNBA_RES, _WNBA_OU, home_name, away_name, effective_line)
+        return _run_prediction(fv, _WNBA_RES, _WNBA_OU, home_name, away_name, effective_line, sport='wnba')
     except Exception as e:
         traceback.print_exc()
         return {'error': str(e)}
@@ -470,6 +493,20 @@ def get_nba_fixtures(start_date=None, end_date=None):
                     'status':     status,
                     'time':       ev.get('date', '')[11:16] if len(ev.get('date', '')) >= 16 else '',
                     'date':       date_str,
+                    # Real UTC instant from ESPN, kept separate from the
+                    # query-date `date` field above (2026-08-24 fix): an
+                    # evening US game's ESPN date can fall on the NEXT UTC
+                    # calendar day, so date_str (the day we queried) and
+                    # ev['date']'s own UTC date can legitimately differ.
+                    # `date` stays query-day for display grouping; anything
+                    # that needs a real absolute kickoff instant (DB storage,
+                    # Best Bet's kickoff filter) must use this field instead
+                    # of reconstructing f"{date}T{time}:00Z", which silently
+                    # produced a wrong UTC timestamp (off by up to a day)
+                    # whenever the two dates diverged -- confirmed as the
+                    # cause of predictions stuck PENDING with a kickoff time
+                    # that looked hours in the past but hadn't happened yet.
+                    'utc_kickoff': ev.get('date', ''),
                     'competition': comp,
                     'postseason': comp != 'NBA',
                 })
@@ -590,6 +627,12 @@ def get_wnba_fixtures(start_date=None, end_date=None):
                     'status':     status,
                     'time':       time_utc,
                     'date':       game_date,
+                    # Real UTC instant, kept separate from `game_date` (the
+                    # query date, used for display grouping) -- see the
+                    # matching comment in get_nba_fixtures for why. Anything
+                    # needing an absolute kickoff instant must use this, not
+                    # f"{date}T{time}:00Z".
+                    'utc_kickoff': ev_date,
                     'ou_line':    ou_line,
                     'postseason': False,
                 })

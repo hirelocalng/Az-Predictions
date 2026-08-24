@@ -521,7 +521,15 @@ def _save_basketball_prediction(game, pred, sport):
     pw      = pred.get('best_bet', pred.get('predicted_winner', ''))
     pg      = pred.get('predicted_ou', '')
     time_   = (game.get('time') or '')
-    kickoff = f"{date}T{time_}:00Z" if time_ else f"{date}T23:00:00Z"
+    # Prefer the real UTC instant ESPN reported (see get_nba/wnba_fixtures)
+    # over reconstructing f"{date}T{time}:00Z" -- `date` there is the query
+    # date used for display grouping, not necessarily the event's own UTC
+    # date, so that reconstruction could be off by a day for evening games
+    # (2026-08-24 fix: this is what left predictions stuck PENDING with a
+    # kickoff_utc that looked hours in the past when the game hadn't
+    # actually been played yet).
+    kickoff = (game.get('utc_kickoff')
+               or (f"{date}T{time_}:00Z" if time_ else f"{date}T23:00:00Z"))
 
     # Store complete prediction so terminal can read back exact same values.
     _payload = _json.dumps({
@@ -2343,6 +2351,13 @@ _ESPN_LIVE_LEAGUES = [
     'ned.1',            # Eredivisie
     'bra.1',            # Brasileirão
     'uefa.champions', 'uefa.europa', 'uefa.europa.conf',
+    # Added 2026-08-24: South American continental club competitions were
+    # never covered by any score source (not ESPN here, not football-data.org
+    # free tier, not reliably on TheSportsDB) -- confirmed root cause of
+    # predictions for cross-country South American pairings (e.g. LDU de
+    # Quito vs Mirassol FC, Club Cerro Porteno vs SE Palmeiras) staying
+    # PENDING for days with zero resolution progress.
+    'conmebol.libertadores', 'conmebol.sudamericana',
 ]
 
 
@@ -3591,9 +3606,15 @@ def best_bet_of_day():
             blbl  = f"{bh} vs {ba}"
             bcomp = g.get('competition', sport_label)
             btime = g.get('time','')
-            bkoff = (f"{g['date']}T{btime}:00Z"
-                     if btime and btime not in ('','00:00')
-                     else f"{g['date']}T23:59:59Z")
+            # Prefer the real UTC instant (see get_nba/wnba_fixtures) over
+            # reconstructing from `date`+`time` -- the query date used for
+            # display grouping isn't always the event's own UTC date for
+            # evening games, so the reconstruction could place a game hours
+            # in the "past" when it hadn't kicked off yet.
+            bkoff = (g.get('utc_kickoff')
+                     or (f"{g['date']}T{btime}:00Z"
+                         if btime and btime not in ('','00:00')
+                         else f"{g['date']}T23:59:59Z"))
             bres  = g.get('result', {})
             bph, bpa = bres.get('home', 0.5), bres.get('away', 0.5)
             if max(bph, bpa) > 0:

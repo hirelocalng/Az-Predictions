@@ -2,10 +2,13 @@ import { useState, useEffect, useRef } from 'react'
 import PremiumGate from './PremiumGate.jsx'
 import { useAuth } from '../contexts/AuthContext.jsx'
 
-const isFinished = utc_kickoff =>
-  utc_kickoff
-    ? Date.now() > new Date(utc_kickoff).getTime() + 2 * 60 * 60 * 1000
-    : false
+// A pick is no longer selectable once its match has kicked off -- not
+// once it's presumed finished. The old version added a 2-hour grace
+// period on top of kickoff, which let an already-started (or already
+// long-finished) match keep displaying as "today's pick" for up to two
+// hours after the backend itself would have excluded it (2026-08-24 fix).
+const hasKickedOff = utc_kickoff =>
+  utc_kickoff ? Date.now() > new Date(utc_kickoff).getTime() : false
 
 export default function BestBetSection() {
   const { auth }   = useAuth()
@@ -28,9 +31,9 @@ export default function BestBetSection() {
   }, [])
 
   const bestBet  = data?.best_bet
-  const bestDone = bestBet && isFinished(bestBet.utc_kickoff)
+  const bestDone = bestBet && hasKickedOff(bestBet.utc_kickoff)
 
-  // If the cached pick just finished, refetch after 10 s so backend serves the next one
+  // If the cached pick has kicked off, refetch after 10 s so the backend serves the next one
   useEffect(() => {
     if (bestDone) {
       clearTimeout(retryRef.current)
@@ -38,8 +41,8 @@ export default function BestBetSection() {
     }
   }, [bestDone])
 
-  // Filter accumulator picks whose match hasn't finished yet
-  const acca = (data?.accumulator || []).filter(p => !isFinished(p.utc_kickoff))
+  // Filter accumulator picks whose match has already kicked off
+  const acca = (data?.accumulator || []).filter(p => !hasKickedOff(p.utc_kickoff))
   const combinedProb = acca.reduce((acc, p) => acc * p.prob, 1.0)
 
   return (

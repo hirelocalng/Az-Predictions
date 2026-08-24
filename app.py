@@ -3453,11 +3453,40 @@ def daily_tips():
     return jsonify(active)
 
 
+def _bestbet_payload_still_valid(payload, now_utc):
+    """
+    A cached Best Bet / Accumulator payload is only reusable if none of its
+    own picks have kicked off since it was built -- a match starting
+    mid-TTL must not keep being served as "today's pick" just because the
+    10-minute cache window hasn't technically expired yet (2026-08-24 fix:
+    this is what let a match linger as the featured pick for up to 10
+    minutes past kickoff even though the candidate filter itself was
+    correct at build time).
+    """
+    if not payload:
+        return False
+    picks = ([payload['best_bet']] if payload.get('best_bet') else []) + list(payload.get('accumulator') or [])
+    for p in picks:
+        koff = p.get('utc_kickoff', '')
+        if not koff:
+            continue
+        try:
+            ko = datetime.fromisoformat(koff.replace('Z', '+00:00'))
+        except Exception:
+            continue
+        if ko <= now_utc:
+            return False
+    return True
+
+
 @app.route('/api/best-bet')
 def best_bet_of_day():
     """Return the single highest-confidence outcome and a 3-pick accumulator from all today's fixtures."""
-    now_ts = time.time()
-    if _BEST_BET_CACHE["data"] is not None and (now_ts - _BEST_BET_CACHE["ts"]) < _CACHE_TTL:
+    now_ts  = time.time()
+    now_utc = datetime.now(timezone.utc)
+    if (_BEST_BET_CACHE["data"] is not None
+            and (now_ts - _BEST_BET_CACHE["ts"]) < _CACHE_TTL
+            and _bestbet_payload_still_valid(_BEST_BET_CACHE["data"], now_utc)):
         return jsonify(_BEST_BET_CACHE["data"])
 
     # Warm club cache
@@ -3486,7 +3515,7 @@ def best_bet_of_day():
             _log.warning('best-bet: intl warm: %s', exc)
             _INTL_TIPS_CACHE.setdefault("data", [])
 
-    today_str = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    today_str = now_utc.strftime('%Y-%m-%d')
 
     # Aggregate all sources; include today's WC fixtures
     raw = list(_CLUB_TIPS_CACHE["data"] or []) + list(_INTL_TIPS_CACHE["data"] or [])
@@ -3579,18 +3608,22 @@ def best_bet_of_day():
                                 'pick': bou_pick, 'prob': round(max(bou,1-bou),4),
                                 'type': 'goals', 'utc_kickoff': bkoff})
 
-    # Only include candidates whose game hasn't started yet
-    now_utc = datetime.now(timezone.utc)
-
+    # Only include candidates whose game hasn't started yet. A missing or
+    # unparseable kickoff time is excluded, not included -- the previous
+    # `return True` default meant a fixture with bad kickoff data (e.g. an
+    # upstream data gap) became PERMANENTLY eligible, since there was
+    # never a timestamp to compare against and age it out. That's how a
+    # match could keep surfacing as "today's pick" long after it had
+    # actually been played (2026-08-24 fix).
     def _kickoff_upcoming(c):
         koff = c.get('utc_kickoff', '')
         if not koff:
-            return True
+            return False
         try:
             ko = datetime.fromisoformat(koff.replace('Z', '+00:00'))
-            return ko > now_utc
         except Exception:
-            return True
+            return False
+        return ko > now_utc
 
     candidates = [c for c in candidates if _kickoff_upcoming(c)]
 

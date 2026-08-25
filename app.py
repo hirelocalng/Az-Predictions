@@ -3468,6 +3468,25 @@ def daily_tips():
     return jsonify(active)
 
 
+_WAT = timezone(timedelta(hours=1))  # West Africa Time, GMT+1, no DST
+
+
+def _wat_end_of_today_utc(now_utc):
+    """
+    UTC instant corresponding to 23:59:59.999999 *today in WAT* -- the day
+    boundary the site's users actually experience (2026-08-26 fix: Best
+    Bet of the Day / Daily Accumulator previously had no day boundary at
+    all, just "kickoff hasn't happened yet", so a strong pick 5+ days out
+    could win the slot and stay there). Computed via aware datetime
+    conversion rather than manual +1h arithmetic so it's correct across
+    the UTC/WAT date-rollover window (00:00-01:00 UTC, when the WAT date
+    is already one day ahead of the UTC date).
+    """
+    now_wat = now_utc.astimezone(_WAT)
+    end_wat = now_wat.replace(hour=23, minute=59, second=59, microsecond=999999)
+    return end_wat.astimezone(timezone.utc)
+
+
 def _bestbet_payload_still_valid(payload, now_utc):
     """
     A cached Best Bet / Accumulator payload is only reusable if none of its
@@ -3496,9 +3515,13 @@ def _bestbet_payload_still_valid(payload, now_utc):
 
 @app.route('/api/best-bet')
 def best_bet_of_day():
-    """Return the single highest-confidence outcome and a 3-pick accumulator from all today's fixtures."""
+    """Return the single highest-confidence outcome and a 3-pick accumulator
+    from fixtures kicking off between now and the end of today in WAT
+    (GMT+1) -- strictly same-day for the site's users, not "any future
+    fixture" (2026-08-26 fix)."""
     now_ts  = time.time()
     now_utc = datetime.now(timezone.utc)
+    end_of_today_utc = _wat_end_of_today_utc(now_utc)
     if (_BEST_BET_CACHE["data"] is not None
             and (now_ts - _BEST_BET_CACHE["ts"]) < _CACHE_TTL
             and _bestbet_payload_still_valid(_BEST_BET_CACHE["data"], now_utc)):
@@ -3530,12 +3553,12 @@ def best_bet_of_day():
             _log.warning('best-bet: intl warm: %s', exc)
             _INTL_TIPS_CACHE.setdefault("data", [])
 
-    today_str = now_utc.strftime('%Y-%m-%d')
+    today_wat_str = now_utc.astimezone(_WAT).strftime('%Y-%m-%d')
 
-    # Aggregate all sources; include today's WC fixtures
+    # Aggregate all sources; include today's (WAT) WC fixtures
     raw = list(_CLUB_TIPS_CACHE["data"] or []) + list(_INTL_TIPS_CACHE["data"] or [])
     for f in _WC_FIXTURES:
-        if f.get('date', '') == today_str and _wc_is_resolved(f):
+        if f.get('date', '') == today_wat_str and _wc_is_resolved(f):
             raw.append(f)
 
     # Deduplicate by match_id
@@ -3594,8 +3617,14 @@ def best_bet_of_day():
         ('WNBA', _WNBA_CACHE.get('data') or [], 155.5),
     ]:
         for g in bball_games:
-            if g.get('date','') != today_str:
-                continue
+            # No date pre-filter here -- the unified kickoff-window check
+            # below (now_utc < ko <= end_of_today_utc) is authoritative and
+            # WAT-day-aware. The old `g['date'] != today_str` check compared
+            # against a UTC calendar-date string, which is wrong for evening
+            # US games whose ESPN-reported UTC instant can fall on the next
+            # UTC day (2026-08-24 fix already addressed this for kickoff
+            # storage; this removes the last vestige of UTC-date comparison
+            # from the selection path itself).
             if g.get('status','').lower() in ('final', 'ft', 'finished'):
                 continue
             bh = g.get('home_team','')
@@ -3629,13 +3658,18 @@ def best_bet_of_day():
                                 'pick': bou_pick, 'prob': round(max(bou,1-bou),4),
                                 'type': 'goals', 'utc_kickoff': bkoff})
 
-    # Only include candidates whose game hasn't started yet. A missing or
+    # Only include candidates kicking off between now and the end of today
+    # in WAT -- strictly same-day (2026-08-26 fix). A missing or
     # unparseable kickoff time is excluded, not included -- the previous
     # `return True` default meant a fixture with bad kickoff data (e.g. an
     # upstream data gap) became PERMANENTLY eligible, since there was
     # never a timestamp to compare against and age it out. That's how a
     # match could keep surfacing as "today's pick" long after it had
-    # actually been played (2026-08-24 fix).
+    # actually been played (2026-08-24 fix). The window's upper bound
+    # (2026-08-26 fix) is what actually enforces same-day: without it, a
+    # strong pick several days out could win the slot and stay there
+    # indefinitely, which is correct-but-confusing behaviour, not a bug --
+    # this makes "today's pick" literally mean today.
     def _kickoff_upcoming(c):
         koff = c.get('utc_kickoff', '')
         if not koff:
@@ -3644,7 +3678,7 @@ def best_bet_of_day():
             ko = datetime.fromisoformat(koff.replace('Z', '+00:00'))
         except Exception:
             return False
-        return ko > now_utc
+        return now_utc < ko <= end_of_today_utc
 
     candidates = [c for c in candidates if _kickoff_upcoming(c)]
 

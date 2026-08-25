@@ -10,22 +10,19 @@ import { useAuth } from '../contexts/AuthContext.jsx'
 const hasKickedOff = utc_kickoff =>
   utc_kickoff ? Date.now() > new Date(utc_kickoff).getTime() : false
 
-// A strong pick can legitimately stay the top Best Bet / Accumulator
-// selection for several days in a row if nothing else has beaten its
-// confidence yet and it genuinely hasn't kicked off -- that's correct
-// behaviour, not a stale cache. Label picks more than a day out so it
-// reads as "still upcoming" rather than looking like a repeat (2026-08-25).
-const kickoffLabel = utc_kickoff => {
+// The backend now only ever selects same-WAT-day fixtures (2026-08-26 fix),
+// so a "Tomorrow" / "in N days" label would never fire -- removed. Kickoff
+// time is still shown, explicitly in WAT (GMT+1, no DST) rather than the
+// viewer's own browser timezone, for consistency with how the backend
+// reasons about "today".
+const kickoffTimeLabel = utc_kickoff => {
   if (!utc_kickoff) return null
-  const now = new Date()
-  const ko  = new Date(utc_kickoff)
-  const diffDays = Math.round(
-    (Date.UTC(ko.getFullYear(), ko.getMonth(), ko.getDate()) -
-     Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86_400_000
-  )
-  if (diffDays <= 0) return null
-  if (diffDays === 1) return 'Tomorrow'
-  return `in ${diffDays} days`
+  const ko = new Date(utc_kickoff)
+  if (Number.isNaN(ko.getTime())) return null
+  const wat = new Date(ko.getTime() + 60 * 60 * 1000)
+  const hh  = String(wat.getUTCHours()).padStart(2, '0')
+  const mm  = String(wat.getUTCMinutes()).padStart(2, '0')
+  return `${hh}:${mm} WAT`
 }
 
 export default function BestBetSection() {
@@ -85,7 +82,7 @@ export default function BestBetSection() {
       {/* No picks at all */}
       {!loading && !bestBet && (
         <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0' }}>
-          No upcoming fixtures to analyse yet — check back soon.
+          No unplayed fixtures remain today — check back tomorrow.
         </p>
       )}
 
@@ -96,8 +93,8 @@ export default function BestBetSection() {
             <div className="bb-left">
               <div className="bb-league">
                 {bestBet.league || 'Football'}
-                {kickoffLabel(bestBet.utc_kickoff) && (
-                  <span className="bb-kickoff-days">{kickoffLabel(bestBet.utc_kickoff)}</span>
+                {kickoffTimeLabel(bestBet.utc_kickoff) && (
+                  <span className="bb-kickoff-time">{kickoffTimeLabel(bestBet.utc_kickoff)}</span>
                 )}
               </div>
               <div className="bb-match">{bestBet.match}</div>
@@ -127,7 +124,7 @@ export default function BestBetSection() {
           ? <div className="skeleton" style={{ height: 220, borderRadius: 16, maxWidth: 700, margin: '0 auto' }} />
           : acca.length === 0
             ? <p style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '24px 0' }}>
-                No accumulator picks remaining today.
+                No unplayed fixtures remain today for an accumulator.
               </p>
             : (
               <div className="acca-card">
@@ -137,11 +134,11 @@ export default function BestBetSection() {
                     <div className="acca-details">
                       <div className="acca-match">{pick.match}</div>
                       <div className="acca-pick-label">{pick.pick}</div>
-                      {(pick.league || kickoffLabel(pick.utc_kickoff)) && (
+                      {(pick.league || kickoffTimeLabel(pick.utc_kickoff)) && (
                         <div className="acca-league">
                           {pick.league}
-                          {kickoffLabel(pick.utc_kickoff) && (
-                            <span className="acca-kickoff-days">{kickoffLabel(pick.utc_kickoff)}</span>
+                          {kickoffTimeLabel(pick.utc_kickoff) && (
+                            <span className="acca-kickoff-time">{kickoffTimeLabel(pick.utc_kickoff)}</span>
                           )}
                         </div>
                       )}

@@ -3553,6 +3553,22 @@ def best_bet_of_day():
             _log.warning('best-bet: intl warm: %s', exc)
             _INTL_TIPS_CACHE.setdefault("data", [])
 
+    # Warm NBA / WNBA caches too, so basketball is actually in the running
+    # for Best Bet of the Day / Daily Accumulator (2026-08-26 fix) --
+    # previously only /api/nba(wnba)/fixtures warmed these, so basketball
+    # could be silently missing from the pool below even with a same-day
+    # pick well above the confidence bar, simply because nobody had loaded
+    # the Basketball section recently. Each call is a no-op if already
+    # fresh (_BBALL_CACHE_TTL, 60s).
+    try:
+        _warm_nba_cache(now_ts)
+    except Exception as exc:
+        _log.warning('best-bet: nba warm: %s', exc)
+    try:
+        _warm_wnba_cache(now_ts)
+    except Exception as exc:
+        _log.warning('best-bet: wnba warm: %s', exc)
+
     today_wat_str = now_utc.astimezone(_WAT).strftime('%Y-%m-%d')
 
     # Aggregate all sources; include today's (WAT) WC fixtures
@@ -3722,9 +3738,16 @@ def _nba_logo(abbr, sport='nba'):
     return f"https://a.espncdn.com/i/teamlogos/{sport}/500/{abbr.lower()}.png"
 
 
-@app.route('/api/nba/fixtures')
-def nba_fixtures():
-    now_ts = time.time()
+def _warm_nba_cache(now_ts):
+    """
+    Refresh _NBA_CACHE if stale. Extracted from the /api/nba/fixtures route
+    (2026-08-26) so best_bet_of_day() can call it directly -- previously
+    Best Bet of the Day / Daily Accumulator only ever read
+    _NBA_CACHE.get('data') without warming it, so basketball was silently
+    absent from the candidate pool whenever nobody had recently loaded the
+    Basketball section (not because it failed the confidence bar, but
+    because its data was never fetched for that computation at all).
+    """
     if _NBA_CACHE["data"] is None or (now_ts - _NBA_CACHE["ts"]) > _BBALL_CACHE_TTL:
         try:
             from nba_predict import get_nba_fixtures as _get_games, predict_nba as _predict
@@ -3769,12 +3792,16 @@ def nba_fixtures():
             app.logger.error("NBA fixtures failed: %s", exc)
             if _NBA_CACHE["data"] is None:
                 _NBA_CACHE["data"] = []
+
+
+@app.route('/api/nba/fixtures')
+def nba_fixtures():
+    _warm_nba_cache(time.time())
     return jsonify(_NBA_CACHE["data"] or [])
 
 
-@app.route('/api/wnba/fixtures')
-def wnba_fixtures():
-    now_ts = time.time()
+def _warm_wnba_cache(now_ts):
+    """Refresh _WNBA_CACHE if stale -- see _warm_nba_cache's docstring for why this exists."""
     if _WNBA_CACHE["data"] is None or (now_ts - _WNBA_CACHE["ts"]) > _BBALL_CACHE_TTL:
         try:
             from nba_predict import get_wnba_fixtures as _get_games, predict_wnba as _predict
@@ -3818,6 +3845,11 @@ def wnba_fixtures():
             app.logger.error("WNBA fixtures failed: %s", exc)
             if _WNBA_CACHE["data"] is None:
                 _WNBA_CACHE["data"] = []
+
+
+@app.route('/api/wnba/fixtures')
+def wnba_fixtures():
+    _warm_wnba_cache(time.time())
     return jsonify(_WNBA_CACHE["data"] or [])
 
 

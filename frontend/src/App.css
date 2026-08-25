@@ -890,6 +890,12 @@ body::after {
 .bb-body { display: flex; gap: 36px; align-items: center; justify-content: space-between; }
 .bb-left { flex: 1; min-width: 0; }
 .bb-league { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+.bb-kickoff-days {
+  display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 10px;
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; text-transform: none;
+  color: var(--text-muted); background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08);
+  vertical-align: middle;
+}
 .bb-match { font-size: 1.15rem; font-weight: 700; color: var(--text); margin-bottom: 10px; }
 .bb-pick { font-size: 1.6rem; font-weight: 800; color: var(--amber); letter-spacing: -0.02em; }
 .bb-right { text-align: center; flex-shrink: 0; min-width: 120px; }
@@ -920,6 +926,11 @@ body::after {
 .acca-match { font-size: 0.88rem; font-weight: 700; color: var(--text); margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .acca-pick-label { font-size: 0.8rem; color: var(--amber); font-weight: 600; }
 .acca-league { font-size: 0.63rem; color: var(--text-subtle); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acca-kickoff-days {
+  display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 8px;
+  font-size: 0.58rem; font-weight: 700; color: var(--text-subtle);
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.08);
+}
 .acca-conf { font-size: 1.05rem; font-weight: 700; color: var(--amber); flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .acca-combined {
   display: flex; align-items: center; justify-content: space-between;

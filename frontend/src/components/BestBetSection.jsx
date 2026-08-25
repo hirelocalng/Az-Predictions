@@ -10,6 +10,24 @@ import { useAuth } from '../contexts/AuthContext.jsx'
 const hasKickedOff = utc_kickoff =>
   utc_kickoff ? Date.now() > new Date(utc_kickoff).getTime() : false
 
+// A strong pick can legitimately stay the top Best Bet / Accumulator
+// selection for several days in a row if nothing else has beaten its
+// confidence yet and it genuinely hasn't kicked off -- that's correct
+// behaviour, not a stale cache. Label picks more than a day out so it
+// reads as "still upcoming" rather than looking like a repeat (2026-08-25).
+const kickoffLabel = utc_kickoff => {
+  if (!utc_kickoff) return null
+  const now = new Date()
+  const ko  = new Date(utc_kickoff)
+  const diffDays = Math.round(
+    (Date.UTC(ko.getFullYear(), ko.getMonth(), ko.getDate()) -
+     Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())) / 86_400_000
+  )
+  if (diffDays <= 0) return null
+  if (diffDays === 1) return 'Tomorrow'
+  return `in ${diffDays} days`
+}
+
 export default function BestBetSection() {
   const { auth }   = useAuth()
   const isPremium  = Boolean(auth?.user?.is_premium)
@@ -76,7 +94,12 @@ export default function BestBetSection() {
           <div className="bb-star-badge">⭐ BEST BET</div>
           <div className="bb-body">
             <div className="bb-left">
-              <div className="bb-league">{bestBet.league || 'Football'}</div>
+              <div className="bb-league">
+                {bestBet.league || 'Football'}
+                {kickoffLabel(bestBet.utc_kickoff) && (
+                  <span className="bb-kickoff-days">{kickoffLabel(bestBet.utc_kickoff)}</span>
+                )}
+              </div>
               <div className="bb-match">{bestBet.match}</div>
               <div className="bb-pick">{bestBet.pick}</div>
             </div>
@@ -114,7 +137,14 @@ export default function BestBetSection() {
                     <div className="acca-details">
                       <div className="acca-match">{pick.match}</div>
                       <div className="acca-pick-label">{pick.pick}</div>
-                      {pick.league && <div className="acca-league">{pick.league}</div>}
+                      {(pick.league || kickoffLabel(pick.utc_kickoff)) && (
+                        <div className="acca-league">
+                          {pick.league}
+                          {kickoffLabel(pick.utc_kickoff) && (
+                            <span className="acca-kickoff-days">{kickoffLabel(pick.utc_kickoff)}</span>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="acca-conf">{(pick.prob * 100).toFixed(1)}%</div>
                   </div>

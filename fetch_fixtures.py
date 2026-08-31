@@ -82,8 +82,17 @@ _INTL_KEYWORDS = frozenset({
 # ── Extraction helpers (football-data.org response shape) ─────────────────────
 
 def _extract_teams(match: dict):
-    home = match.get("homeTeam", {}).get("name", "").strip()
-    away = match.get("awayTeam", {}).get("name", "").strip()
+    # .get("name", "") only substitutes when the key is absent -- a cup
+    # fixture whose participants aren't decided yet (e.g. a Copa Libertadores
+    # quarter-final slot before the prior round finishes) has homeTeam/
+    # awayTeam present but "name": null, which .strip() then crashes on.
+    # Confirmed live 2026-08-31: one such placeholder fixture, 8 days out,
+    # took down get_daily_tips/get_club_tips entirely (no per-match
+    # try/except in their loops), reading as "no fixtures today" everywhere
+    # that shares this fetch, while single-competition pages were unaffected
+    # since none of their matches happened to be the null-team one.
+    home = (match.get("homeTeam", {}).get("name") or "").strip()
+    away = (match.get("awayTeam", {}).get("name") or "").strip()
     return home, away
 
 
@@ -561,34 +570,43 @@ def _score_club_match(match, club_predict_fn):
     if not home_name or not away_name:
         return None
 
-    comp_code  = _extract_comp_code(match)
-    league_code = _COMP_TO_LEAGUE.get(comp_code, "E0")
-    comp_name  = match.get("competition", {}).get("name", "")
-    status     = _get_match_status(match)
-    time_str   = _extract_time(match)
-    utc_iso    = _extract_utc_iso(match)
-    home_crest = _extract_logo(match, "home")
-    away_crest = _extract_logo(match, "away")
-
-    df_hist = _load_history(league_code)
-    if df_hist.empty:
-        df_hist = _load_history("E0")
-
-    hs  = _team_stats(home_name, df_hist)
-    as_ = _team_stats(away_name, df_hist)
-
-    form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
-    form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
-
-    elo_diff = _elo_diff_safe(home_name, away_name)
-
-    # No live pre-match odds feed exists for upcoming fixtures (only
-    # historical closing odds in Matches.csv) — this used to be faked with
-    # a hardcoded 2.60/3.10/2.80 triple, which flattened every prediction
-    # toward a near-uniform split regardless of the real matchup (2026-08-21
-    # incident). Models are trained odds-free now (train.py BASE_FEATURES);
-    # no odds are fetched, computed, or displayed anywhere in this path.
+    # Everything below reads more optional/nested fields from a third-party
+    # response (competition name, crests, etc.). _extract_teams already
+    # showed one of these can be structurally present but null in a way a
+    # naive .get(key, default) doesn't catch (2026-08-31). Rather than chase
+    # every such field individually, one bad match here returns None (skip
+    # it) instead of raising out of _score_club_match and taking down the
+    # whole batch it's part of, as it did before this fix -- get_daily_tips/
+    # get_club_tips have no per-match try/except of their own.
     try:
+        comp_code  = _extract_comp_code(match)
+        league_code = _COMP_TO_LEAGUE.get(comp_code, "E0")
+        comp_name  = match.get("competition", {}).get("name", "")
+        status     = _get_match_status(match)
+        time_str   = _extract_time(match)
+        utc_iso    = _extract_utc_iso(match)
+        home_crest = _extract_logo(match, "home")
+        away_crest = _extract_logo(match, "away")
+
+        df_hist = _load_history(league_code)
+        if df_hist.empty:
+            df_hist = _load_history("E0")
+
+        hs  = _team_stats(home_name, df_hist)
+        as_ = _team_stats(away_name, df_hist)
+
+        form5_h = hs.pop("_pts", round((hs["win"] * 3 + hs["draw"]) * 5))
+        form5_a = as_.pop("_pts", round((as_["win"] * 3 + as_["draw"]) * 5))
+
+        elo_diff = _elo_diff_safe(home_name, away_name)
+
+        # No live pre-match odds feed exists for upcoming fixtures (only
+        # historical closing odds in Matches.csv) — this used to be faked
+        # with a hardcoded 2.60/3.10/2.80 triple, which flattened every
+        # prediction toward a near-uniform split regardless of the real
+        # matchup (2026-08-21 incident). Models are trained odds-free now
+        # (train.py BASE_FEATURES); no odds are fetched, computed, or
+        # displayed anywhere in this path.
         ph, pd_, pa, pg, pc, btts = club_predict_fn(
             hs, as_, elo_diff, form5_h, form5_a, league_code
         )

@@ -120,6 +120,28 @@ def _nba_abbr(name):
     return _NBA_NAME_TO_ABBR.get(name.lower().strip(), name[:3].upper())
 
 
+# ─── Cross-sport contamination guard ──────────────────────────────────────────
+# ESPN's scoreboard endpoints are scoped by URL path only (.../basketball/nba/...
+# vs .../basketball/wnba/...); our code never validated that the events actually
+# returned were real NBA/WNBA franchises. A bad response once surfaced a real
+# Premier League fixture ("Aston Villa vs Arsenal") tagged as a WNBA game with a
+# basketball O/U market. These allow-lists reject anything that isn't a
+# recognized franchise before it reaches prediction/storage.
+_NBA_VALID_ABBRS  = set(_NBA_NAME_TO_ABBR.values())
+_WNBA_VALID_ABBRS = set(WNBA_NAME_TO_ABBR.values())
+
+
+def _team_looks_valid(display_name, abbr, name_map, valid_abbrs):
+    """True if display_name matches a known franchise name, or abbr matches a
+    known franchise abbreviation. Either match is enough — this tolerates
+    minor ESPN naming variance while still rejecting teams from other sports."""
+    dn = (display_name or '').strip().lower()
+    if dn and dn in name_map:
+        return True
+    ab = (abbr or '').strip().upper()
+    return bool(ab) and ab in valid_abbrs
+
+
 # ─── BallDontLie helpers ──────────────────────────────────────────────────────
 _bdl_teams_cache = None
 
@@ -465,6 +487,11 @@ def get_nba_fixtures(start_date=None, end_date=None):
                     continue
                 ht = home_c.get('team', {})
                 at = away_c.get('team', {})
+                if not (_team_looks_valid(ht.get('displayName'), ht.get('abbreviation'), _NBA_NAME_TO_ABBR, _NBA_VALID_ABBRS)
+                        and _team_looks_valid(at.get('displayName'), at.get('abbreviation'), _NBA_NAME_TO_ABBR, _NBA_VALID_ABBRS)):
+                    print(f"[nba_predict] REJECTED non-NBA team in NBA scoreboard response: "
+                          f"{ht.get('displayName')!r} vs {at.get('displayName')!r}")
+                    continue
                 sname = comp0.get('status', {}).get('type', {}).get('name', '')
                 if 'FINAL' in sname:
                     status = 'Final'
@@ -533,6 +560,10 @@ def get_nba_fixtures(start_date=None, end_date=None):
                 as_  = e.get('intAwayScore')
                 home = e.get('strHomeTeam', '')
                 away = e.get('strAwayTeam', '')
+                if not (_team_looks_valid(home, None, _NBA_NAME_TO_ABBR, _NBA_VALID_ABBRS)
+                        and _team_looks_valid(away, None, _NBA_NAME_TO_ABBR, _NBA_VALID_ABBRS)):
+                    print(f"[nba_predict] REJECTED non-NBA team in NBA TSDB fallback: {home!r} vs {away!r}")
+                    continue
                 ev   = (e.get('strEvent') or '').lower()
                 rnd  = (e.get('strRound') or '').lower()
                 if 'finals' in ev or 'finals' in rnd:
@@ -594,6 +625,11 @@ def get_wnba_fixtures(start_date=None, end_date=None):
                     continue
                 ht = home_c.get('team', {})
                 at = away_c.get('team', {})
+                if not (_team_looks_valid(ht.get('displayName'), ht.get('abbreviation'), WNBA_NAME_TO_ABBR, _WNBA_VALID_ABBRS)
+                        and _team_looks_valid(at.get('displayName'), at.get('abbreviation'), WNBA_NAME_TO_ABBR, _WNBA_VALID_ABBRS)):
+                    print(f"[nba_predict] REJECTED non-WNBA team in WNBA scoreboard response: "
+                          f"{ht.get('displayName')!r} vs {at.get('displayName')!r}")
+                    continue
                 ev_date   = ev.get('date', '')
                 game_date = d.strftime('%Y-%m-%d')           # use query date, not UTC ISO date
                 time_utc  = ev_date[11:16] if len(ev_date) >= 16 else ''
@@ -659,6 +695,10 @@ def get_wnba_fixtures(start_date=None, end_date=None):
                 as_ = e.get('intAwayScore')
                 home = e.get('strHomeTeam', '')
                 away = e.get('strAwayTeam', '')
+                if not (_team_looks_valid(home, None, WNBA_NAME_TO_ABBR, _WNBA_VALID_ABBRS)
+                        and _team_looks_valid(away, None, WNBA_NAME_TO_ABBR, _WNBA_VALID_ABBRS)):
+                    print(f"[nba_predict] REJECTED non-WNBA team in WNBA TSDB fallback: {home!r} vs {away!r}")
+                    continue
                 result.append({
                     'id':         e.get('idEvent'),
                     'home_team':  home,

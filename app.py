@@ -236,6 +236,24 @@ def _init_db():
                 "ALTER TABLE predictions ADD COLUMN IF NOT EXISTS prediction_payload JSONB",
             ]:
                 cur.execute(_col)
+            # Defense-in-depth against cross-sport contamination (2026-08-31):
+            # a bad ESPN response once let a football fixture ("Aston Villa vs
+            # Arsenal") get stored with sport='wnba'. This constraint doesn't
+            # catch that exact case (the tag was validly one of the three
+            # values, just the wrong one) but blocks any future write with an
+            # unrecognized/garbage sport value. Wrapped in a DO block so it's
+            # safe to re-run on every startup without aborting the transaction
+            # once the constraint already exists.
+            cur.execute("""
+                DO $$
+                BEGIN
+                    ALTER TABLE predictions
+                        ADD CONSTRAINT chk_predictions_sport
+                        CHECK (sport IN ('football','nba','wnba'));
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+            """)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS analytics_logs (
                     id               SERIAL PRIMARY KEY,
@@ -436,6 +454,7 @@ def _save_prediction(tip):
                             kickoff_utc        = EXCLUDED.kickoff_utc,
                             prediction_payload = EXCLUDED.prediction_payload
                         WHERE predictions.result_status = 'PENDING'
+                          AND COALESCE(predictions.sport, 'football') = 'football'
                 """, (mid, home, away, match_date, mtime, comp, pw,
                       pg_str, btts_str, cor_str, kickoff, _payload))
                 return
@@ -561,6 +580,7 @@ def _save_basketball_prediction(game, pred, sport):
                             kickoff_utc        = EXCLUDED.kickoff_utc,
                             prediction_payload = EXCLUDED.prediction_payload
                         WHERE predictions.result_status = 'PENDING'
+                          AND predictions.sport = EXCLUDED.sport
                 """, (mid, home, away, date, time_, comp, pw, pg, kickoff, sport, _payload))
                 return
     except Exception as e:
@@ -4049,6 +4069,69 @@ def admin_deduplicate():
             })
     except Exception as e:
         _log.exception('admin_deduplicate: %s', e)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/admin/purge-mistagged-basketball', methods=['GET', 'POST'])
+@_require_admin
+def admin_purge_mistagged_basketball():
+    """
+    Cross-sport contamination cleanup (2026-08-31 incident: a Premier League
+    fixture, "Aston Villa vs Arsenal", was stored with sport='wnba' and shown
+    in the WNBA section / Best Bet / Accumulator with a basketball O/U market).
+
+    GET  → list `predictions` rows tagged sport IN ('nba','wnba') whose team
+           names don't match a known NBA/WNBA franchise, using the same
+           allow-lists (_NBA_NAME_TO_ABBR / WNBA_NAME_TO_ABBR) that
+           nba_predict.py now enforces at fetch time.
+    POST → delete those rows. We have no reliable way to know what sport a
+           mistagged row actually belongs to, so this purges rather than
+           "corrects" — a legitimate basketball fixture will simply
+           re-populate next time the NBA/WNBA cache warms.
+    """
+    if not _DB_CONN_URL:
+        return jsonify({'error': 'DB not configured'}), 503
+    try:
+        from nba_predict import _NBA_NAME_TO_ABBR, WNBA_NAME_TO_ABBR
+    except Exception as e:
+        return jsonify({'error': f'Cannot import nba_predict: {e}'}), 500
+
+    def _looks_valid(name, sport):
+        name_map = _NBA_NAME_TO_ABBR if sport == 'nba' else WNBA_NAME_TO_ABBR
+        return (name or '').strip().lower() in name_map
+
+    try:
+        with _db() as (conn, cur):
+            if conn is None:
+                return jsonify({'error': 'DB unavailable'}), 503
+            cur.execute("""
+                SELECT match_id, home_team, away_team, sport, competition, match_date
+                FROM predictions
+                WHERE sport IN ('nba', 'wnba')
+                ORDER BY match_date
+            """)
+            cols = [d[0] for d in cur.description]
+            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+            bad = [r for r in rows if not (_looks_valid(r['home_team'], r['sport'])
+                                            and _looks_valid(r['away_team'], r['sport']))]
+
+            if request.method == 'GET':
+                return jsonify({'checked': len(rows), 'mistagged_found': len(bad), 'rows': bad})
+
+            deleted = []
+            for r in bad:
+                cur.execute("DELETE FROM predictions WHERE match_id=%s", (r['match_id'],))
+                deleted.append(r['match_id'])
+
+            return jsonify({
+                'action': 'purge complete',
+                'checked': len(rows),
+                'deleted': len(deleted),
+                'deleted_rows': bad,
+            })
+    except Exception as e:
+        _log.exception('admin_purge_mistagged_basketball: %s', e)
         return jsonify({'error': str(e)}), 500
 
 

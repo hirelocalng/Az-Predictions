@@ -77,6 +77,7 @@ WNBA_NAME_TO_ABBR = {
     'orlando miracle':      'ORL',
     'miami sol':            'MIA',
     'portland trail blazers wnba': 'POR',
+    'toronto tempo':        'TOR',
 }
 
 def _wnba_abbr(name):

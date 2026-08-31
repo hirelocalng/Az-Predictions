@@ -194,7 +194,7 @@ function Header({ auth, onLogout, navigate }) {
 
 // ── Hero ──────────────────────────────────────────────────────────────────────
 
-function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onClub, onNBA, onWNBA, onOdds, navigate }) {
+function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onClub, onNBA, onWNBA, onOdds, onHistory, navigate }) {
   return (
     <section className="hero">
       <div className="hero-bg" />
@@ -217,6 +217,7 @@ function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onClub, onNBA, onWNBA, o
         <button className="btn-outline" onClick={onClub}>Club Tips</button>
         <button className="btn-outline" onClick={onNBA}>🏀 NBA</button>
         <button className="btn-outline" onClick={onWNBA}>🏀 WNBA</button>
+        <button className="btn-outline" onClick={onHistory}>History</button>
         <button className="btn-outline" onClick={() => navigate('/subscribe')}
                 style={{ borderColor: 'rgba(201,146,42,0.5)', color: 'var(--amber)' }}>
           👑 Go Premium
@@ -226,8 +227,6 @@ function Hero({ onBestBet, onDailyTips, onPL, onLaLiga, onClub, onNBA, onWNBA, o
         {[
           ['280k+', 'Matches trained', 'green'],
           ['40',    'Leagues covered', ''],
-          ['57.7%', 'Corners accuracy', 'green'],
-          ['59.2%', 'WC major accuracy', 'amber'],
         ].map(([num, label, cls]) => (
           <div className="metric" key={label}>
             <div className={`metric-num${cls ? ' ' + cls : ''}`}>{num}</div>
@@ -359,6 +358,7 @@ export default function App() {
               onClub={()      => { setActive('club');       scrollTo('club')       }}
               onNBA={()       => { setActive('nba');        scrollTo('nba-section')  }}
               onWNBA={()      => { setActive('wnba');       scrollTo('wnba-section') }}
+              onHistory={()   => { setActive('history');    scrollTo('history')      }}
               navigate={navigate}
             />
             <BestBetSection />

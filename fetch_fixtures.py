@@ -157,6 +157,37 @@ def _fetch_window(days: int) -> list:
     matches = r.json().get("matches", [])
     return [m for m in matches if not _is_finished(m)]
 
+
+# Cached wrapper around _fetch_window -- same fix as _fetch_comp_window_cached
+# below (2026-08-23 incident), applied here after confirming live on
+# 2026-08-31 that get_daily_tips/get_club_tips were still calling
+# _fetch_window directly and so remained exposed to the identical failure
+# mode: a football-data.org rate-limit/error on this call raises, the Flask
+# route's except-block swallows it into an empty list, and that reads
+# indistinguishable from "genuinely no fixtures" -- while /api/pl/fixtures,
+# which already goes through _fetch_comp_window_cached, kept serving good
+# data from its 1-hour cache the whole time. One shared cache also means
+# get_daily_tips and get_club_tips (both called with days=9) now share a
+# single underlying football-data.org call instead of two independent ones.
+_WINDOW_CACHE: dict = {}
+_WINDOW_TTL = 3600  # 1 hour -- matches _COMP_WINDOW_TTL's proven-reliable cadence
+
+
+def _fetch_window_cached(days: int) -> list:
+    import time as _time
+    now = _time.time()
+    cached = _WINDOW_CACHE.get(days)
+    if cached and (now - cached["ts"]) < _WINDOW_TTL:
+        return cached["data"]
+    try:
+        matches = _fetch_window(days)
+    except Exception:
+        if cached:
+            return cached["data"]
+        matches = []
+    _WINDOW_CACHE[days] = {"data": matches, "ts": now}
+    return matches
+
 # ── Historical club stats ─────────────────────────────────────────────────────
 
 _hist_cache: dict = {}
@@ -598,7 +629,7 @@ def get_club_tips(club_predict_fn) -> list:
     'no matches' message; each card carries its own utc_kickoff so the
     frontend can show/sort by date).
     """
-    matches = _fetch_window(9)
+    matches = _fetch_window_cached(9)
     tips = []
 
     for idx, match in enumerate(matches):
@@ -991,7 +1022,7 @@ def get_daily_tips(club_predict_fn, wc_predict_fn) -> list:
 
     # ── Source 1: football-data.org (9-day window, not just today) ───────────
     try:
-        fd_matches = _fetch_window(9)
+        fd_matches = _fetch_window_cached(9)
     except Exception:
         fd_matches = []
 

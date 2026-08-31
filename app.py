@@ -4072,6 +4072,16 @@ def admin_deduplicate():
         return jsonify({'error': str(e)}), 500
 
 
+_PURGE_CONFIRM_TOKENS = {}   # token -> {'match_ids': set, 'created': ts}
+_PURGE_TOKEN_TTL = 600       # 10 minutes
+
+
+def _purge_prune_tokens(now_ts):
+    for t in [t for t, v in _PURGE_CONFIRM_TOKENS.items()
+              if now_ts - v['created'] > _PURGE_TOKEN_TTL]:
+        _PURGE_CONFIRM_TOKENS.pop(t, None)
+
+
 @app.route('/admin/purge-mistagged-basketball', methods=['GET', 'POST'])
 @_require_admin
 def admin_purge_mistagged_basketball():
@@ -4080,14 +4090,20 @@ def admin_purge_mistagged_basketball():
     fixture, "Aston Villa vs Arsenal", was stored with sport='wnba' and shown
     in the WNBA section / Best Bet / Accumulator with a basketball O/U market).
 
-    GET  → list `predictions` rows tagged sport IN ('nba','wnba') whose team
-           names don't match a known NBA/WNBA franchise, using the same
-           allow-lists (_NBA_NAME_TO_ABBR / WNBA_NAME_TO_ABBR) that
-           nba_predict.py now enforces at fetch time.
-    POST → delete those rows. We have no reliable way to know what sport a
-           mistagged row actually belongs to, so this purges rather than
-           "corrects" — a legitimate basketball fixture will simply
-           re-populate next time the NBA/WNBA cache warms.
+    GET  → dry run only. Lists `predictions` rows tagged sport IN ('nba','wnba')
+           whose team names don't match a known NBA/WNBA franchise (using the
+           same allow-lists nba_predict.py enforces at fetch time), honoring
+           an optional ?exclude=match_id1,match_id2 for rows a human has
+           reviewed and judged not actually mistagged. Mints a one-time
+           confirm_token bound to exactly that (post-exclude) row set,
+           valid for 10 minutes. Never deletes anything.
+    POST → requires ?confirm_token=... from a prior GET. Deletes exactly the
+           row set that token was minted for (re-verified still mismatched at
+           delete time, so nothing deleted out from under a stale token), and
+           the token is single-use. A POST without a valid token is rejected
+           with 400 -- there is no way to trigger a delete in one call, by
+           design (2026-08-31: a wrong-shaped exclude param silently deleted
+           everything on the first version of this endpoint).
     """
     if not _DB_CONN_URL:
         return jsonify({'error': 'DB not configured'}), 503
@@ -4100,10 +4116,53 @@ def admin_purge_mistagged_basketball():
         name_map = _NBA_NAME_TO_ABBR if sport == 'nba' else WNBA_NAME_TO_ABBR
         return (name or '').strip().lower() in name_map
 
+    now_ts = time.time()
+    _purge_prune_tokens(now_ts)
+
     try:
         with _db() as (conn, cur):
             if conn is None:
                 return jsonify({'error': 'DB unavailable'}), 503
+
+            if request.method == 'POST':
+                token = request.args.get('confirm_token', '')
+                entry = _PURGE_CONFIRM_TOKENS.get(token)
+                if not entry:
+                    return jsonify({
+                        'error': 'Missing or unknown/expired confirm_token. '
+                                 'Call GET first to review what would be deleted '
+                                 'and obtain a confirm_token, then POST with '
+                                 '?confirm_token=<token> to execute.'
+                    }), 400
+                _PURGE_CONFIRM_TOKENS.pop(token, None)   # single-use
+
+                # Re-verify each row is still actually mismatched right now --
+                # a human may have fixed it, or it may have already been
+                # deleted, since the token was minted.
+                cur.execute("""
+                    SELECT match_id, home_team, away_team, sport, competition, match_date
+                    FROM predictions
+                    WHERE sport IN ('nba', 'wnba') AND match_id = ANY(%s)
+                """, (list(entry['match_ids']),))
+                cols = [d[0] for d in cur.description]
+                current = [dict(zip(cols, r)) for r in cur.fetchall()]
+                still_bad = [r for r in current if not (_looks_valid(r['home_team'], r['sport'])
+                                                          and _looks_valid(r['away_team'], r['sport']))]
+
+                deleted = []
+                for r in still_bad:
+                    cur.execute("DELETE FROM predictions WHERE match_id=%s", (r['match_id'],))
+                    deleted.append(r['match_id'])
+
+                skipped = sorted(entry['match_ids'] - {r['match_id'] for r in still_bad})
+                return jsonify({
+                    'action': 'purge complete',
+                    'deleted': len(deleted),
+                    'deleted_rows': still_bad,
+                    'skipped_no_longer_mismatched_or_already_gone': skipped,
+                })
+
+            # ── GET: dry run ────────────────────────────────────────────────
             cur.execute("""
                 SELECT match_id, home_team, away_team, sport, competition, match_date
                 FROM predictions
@@ -4116,29 +4175,26 @@ def admin_purge_mistagged_basketball():
             bad = [r for r in rows if not (_looks_valid(r['home_team'], r['sport'])
                                             and _looks_valid(r['away_team'], r['sport']))]
 
-            if request.method == 'GET':
-                return jsonify({'checked': len(rows), 'mistagged_found': len(bad), 'rows': bad})
-
-            # Optional ?exclude=match_id1,match_id2 to skip rows a human has
-            # reviewed and judged not actually mistagged (e.g. an All-Star
-            # exhibition using non-franchise team names) rather than deleting
-            # everything the heuristic flags.
             exclude = set(
                 mid.strip() for mid in request.args.get('exclude', '').split(',') if mid.strip()
             )
-            to_delete = [r for r in bad if r['match_id'] not in exclude]
+            would_delete = [r for r in bad if r['match_id'] not in exclude]
 
-            deleted = []
-            for r in to_delete:
-                cur.execute("DELETE FROM predictions WHERE match_id=%s", (r['match_id'],))
-                deleted.append(r['match_id'])
+            token = secrets.token_urlsafe(16)
+            _PURGE_CONFIRM_TOKENS[token] = {
+                'match_ids': {r['match_id'] for r in would_delete},
+                'created': now_ts,
+            }
 
             return jsonify({
-                'action': 'purge complete',
                 'checked': len(rows),
-                'deleted': len(deleted),
-                'deleted_rows': to_delete,
-                'excluded': [r['match_id'] for r in bad if r['match_id'] in exclude],
+                'mistagged_found': len(bad),
+                'rows': bad,
+                'excluded': sorted(exclude & {r['match_id'] for r in bad}),
+                'would_delete': len(would_delete),
+                'confirm_token': token,
+                'confirm_token_expires_in_seconds': _PURGE_TOKEN_TTL,
+                'to_execute': 'POST /admin/purge-mistagged-basketball?confirm_token=' + token,
             })
     except Exception as e:
         _log.exception('admin_purge_mistagged_basketball: %s', e)

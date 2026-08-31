@@ -182,9 +182,15 @@ def _fetch_window_cached(days: int) -> list:
     try:
         matches = _fetch_window(days)
     except Exception:
-        if cached:
-            return cached["data"]
-        matches = []
+        # A failure with no prior good data must NOT get written to the
+        # cache as if it were a real result -- that would lock in an empty
+        # list for a full _WINDOW_TTL on a transient cold-start failure
+        # (found live 2026-08-31: the very first call after a deploy failed
+        # once, and the resulting [] got cached as "good" for an hour,
+        # exactly reproducing the 2026-08-23 empty-list bug this wrapper
+        # was meant to fix). Leaving the cache untouched means the next
+        # call retries immediately instead of waiting out the TTL.
+        return cached["data"] if cached else []
     _WINDOW_CACHE[days] = {"data": matches, "ts": now}
     return matches
 
@@ -698,9 +704,11 @@ def _fetch_comp_window_cached(comp_code: str) -> list:
     try:
         matches = _fetch_comp_window(comp_code, _COMP_WINDOW_DAYS)
     except Exception:
-        if cached:
-            return cached["data"]
-        matches = []
+        # See the identical comment in _fetch_window_cached (2026-08-31):
+        # a cold-start failure with no prior cache must not get written
+        # here as if it were real data, or it locks in an empty list for
+        # a full _COMP_WINDOW_TTL instead of retrying on the next request.
+        return cached["data"] if cached else []
     _COMP_WINDOW_CACHE[comp_code] = {"data": matches, "ts": now}
     return matches
 

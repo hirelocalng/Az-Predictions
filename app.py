@@ -4119,8 +4119,17 @@ def admin_purge_mistagged_basketball():
             if request.method == 'GET':
                 return jsonify({'checked': len(rows), 'mistagged_found': len(bad), 'rows': bad})
 
+            # Optional ?exclude=match_id1,match_id2 to skip rows a human has
+            # reviewed and judged not actually mistagged (e.g. an All-Star
+            # exhibition using non-franchise team names) rather than deleting
+            # everything the heuristic flags.
+            exclude = set(
+                mid.strip() for mid in request.args.get('exclude', '').split(',') if mid.strip()
+            )
+            to_delete = [r for r in bad if r['match_id'] not in exclude]
+
             deleted = []
-            for r in bad:
+            for r in to_delete:
                 cur.execute("DELETE FROM predictions WHERE match_id=%s", (r['match_id'],))
                 deleted.append(r['match_id'])
 
@@ -4128,7 +4137,8 @@ def admin_purge_mistagged_basketball():
                 'action': 'purge complete',
                 'checked': len(rows),
                 'deleted': len(deleted),
-                'deleted_rows': bad,
+                'deleted_rows': to_delete,
+                'excluded': [r['match_id'] for r in bad if r['match_id'] in exclude],
             })
     except Exception as e:
         _log.exception('admin_purge_mistagged_basketball: %s', e)
